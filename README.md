@@ -202,18 +202,12 @@ shown on stderr while the model commands run.
 uv run flighty-exporter
 ```
 
-With no command, in a terminal, the tool opens a full-screen application that
-runs the same stages as `run` (classify, extract and review; audit and
-include too when `[run] thoroughness = "thorough"`) and shows them live: every
-stage with its state, a progress bar for the running stage with the messages
-done, the time per message and the time remaining, running counts, and the
-end-of-run report when it finishes. It reads the same config file (`--config`
-works as for the commands); the first launch sets it up (see below). Keys: `p` pauses after the message in progress and continues;
-`q` quits after the message in progress (`q` or Ctrl-C again quits at once),
-and the next launch carries on where it stopped; `r` retries after a
-model-server problem, once you have fixed it. The same rule as the commands
-keeps email on this machine: a non-local Ollama address is refused unless the
-config file allows it.
+With no command, in a terminal, the tool opens a full-screen application
+that carries you through the whole job in order: setup (first launch) or the
+startup prompt (later launches), the run, the review, and the export. It
+reads and writes the same config file as the commands (`--config` works as
+for them). The same rule as the commands keeps email on this machine: a
+non-local Ollama address is refused unless the config file allows it.
 
 **First launch: setup.** With no session yet (no store), the application
 starts with setup, filled in from the config file if there is one. It asks
@@ -239,26 +233,14 @@ starts fresh. Starting fresh asks once, listing
 what would be lost and what is kept, deletes what `run --fresh` deletes, and
 shows setup with your previous answers filled in.
 
-The same steps are available as commands, for scripts:
-
-```
-uv run flighty-exporter setup --mailbox PATH [--name NAME ...] [--thoroughness quick|thorough] [--check]
-uv run flighty-exporter pull-models [--yes]
-```
-
-`setup` checks and writes the three answers exactly as the setup screen does
-(nothing is written if one is refused; a mailbox inside the config file's
-folder is written as a relative path), and with `--check` then reports
-whether the model server is ready: on this machine, reachable, version, and
-each model pulled or missing with its approximate size (exit status 1 if not
-ready). `pull-models` lists the configured models the server lacks with
-their approximate sizes (`nimble` about 9.3 GB, `gemma4:12b-it-q4_K_M` about
-8 GB; other models' sizes are not known until the download starts), and with
-`--yes` downloads them through the server, printing progress. Both honour
-the same locality rule, and take `--allow-remote` like the model commands.
-
-Outside a terminal (piped, or run from a script), the bare command prints the
-usage line and exits with status 2, as before.
+**The run.** The progress screen runs the same stages as `run` (classify,
+extract and review; audit and include too for Thorough) and shows them live:
+every stage with its state, a progress bar for the running stage with the
+messages done, the time per message and the time remaining, running counts,
+and the end-of-run report when it finishes. Keys: `p` pauses after the
+message in progress and continues; `q` quits after the message in progress
+(`q` or Ctrl-C again quits at once), and the next launch carries on where it
+stopped; `r` retries after a model-server problem, once you have fixed it.
 
 **Reviewing in the application.** When the run has finished, press `enter`
 to review the flights (only a complete run is reviewed: not after a pause or
@@ -294,6 +276,27 @@ reason) once you have entered it in Flighty, saved at once and written to
 and export again (each export writes a new import file named with the time);
 `q` quits. Nothing is sent to Flighty or anywhere else: the screen only writes
 local files.
+
+**Setup as commands.** The setup steps are also available as commands, for scripts:
+
+```
+uv run flighty-exporter setup --mailbox PATH [--name NAME ...] [--thoroughness quick|thorough] [--check]
+uv run flighty-exporter pull-models [--yes]
+```
+
+`setup` checks and writes the three answers exactly as the setup screen does
+(nothing is written if one is refused; a mailbox inside the config file's
+folder is written as a relative path), and with `--check` then reports
+whether the model server is ready: on this machine, reachable, version, and
+each model pulled or missing with its approximate size (exit status 1 if not
+ready). `pull-models` lists the configured models the server lacks with
+their approximate sizes (`nimble` about 9.3 GB, `gemma4:12b-it-q4_K_M` about
+8 GB; other models' sizes are not known until the download starts), and with
+`--yes` downloads them through the server, printing progress. Both honour
+the same locality rule, and take `--allow-remote` like the model commands.
+
+Outside a terminal (piped, or run from a script), the bare command prints the
+usage line and exits with status 2, as before.
 
 ### All in one go: run
 
@@ -967,7 +970,9 @@ flight emails in it and the flights they describe, for comparing with the
 review table. Both were generated by `scripts/generate_test_mbox.py`, which
 fixes the people, bookings and flights with a seed and has a local Ollama
 model write only the subject and body text. To try it, set
-`mailbox = "test.mbox"` and `names = ["Jordan Ellis"]` in your config.
+`mailbox = "test.mbox"` at the top of your config and
+`names = ["Jordan Ellis"]` under `[passenger]` (or let setup do it:
+`uv run flighty-exporter setup --mailbox test.mbox --name "Jordan Ellis"`).
 
 The rule for contributions: no real email, name, address, booking reference or
 flight ever goes into the repository, including test fixtures. Everything in

@@ -5,15 +5,20 @@ test suite (see the spec, issue #15, "Testing Decisions"). Before a release,
 or after changing a screen, work through that screen's list in a real
 terminal. Each step says what to do and what you should see.
 
-Use invented mail for these checks: `test.mbox` (with `names = ["Jordan
-Ellis"]`) and a local Ollama with the configured models pulled. Start from a
-folder holding a config file like:
+Use invented mail for these checks: `test.mbox` (with `[passenger] names =
+["Jordan Ellis"]`) and a local Ollama with the configured models pulled.
+Start from a folder holding a config file like:
 
 ```toml
 mailbox = "test.mbox"
-names = ["Jordan Ellis"]
 store = "check.db"
+
+[passenger]
+names = ["Jordan Ellis"]
 ```
+
+(Setup writes such a file for you: `uv run flighty-exporter setup --mailbox
+test.mbox --name "Jordan Ellis"`, then add the `store` line.)
 
 Delete `check.db`, `review.csv` and `failures.csv` to start a check from
 scratch.
@@ -296,7 +301,7 @@ to resume.
 ## Review screen
 
 Start from a finished run of `test.mbox` (see the progress screen's step
-12). With `names = ["Jordan Ellis"]` some bookings are dropped as other
+12). With `[passenger] names = ["Jordan Ellis"]` some bookings are dropped as other
 passengers'; for an unreadable email, and for a flight with several source
 emails, look at the end-of-run report's counts and the `flights` command's
 output (`uv run flighty-exporter flights`), which lists the same flights in
