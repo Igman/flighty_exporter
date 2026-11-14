@@ -131,8 +131,8 @@ def test_below_threshold_flight_emails_within_the_budget_lower_the_threshold_for
     assert check_lines(result) == [
         f"{CHECK}ran (sample of up to 1 per band, seed 1)",
         "    sampled below the threshold 0.05, with flights: [0.02, 0.05) 1 of 1, [0.001, 0.005) 0 of 1",
-        "    threshold lowered from 0.05 to 0.02 for this session; 3 more emails extracted, 3 flight emails among "
-        "them (1 of them already extracted by the audit)",
+        "    threshold lowered from 0.05 to 0.02 for this session; 3 emails newly included by the lower threshold "
+        "(1 already read by the check, 2 read now), 3 of them with flights",
     ]
     assert "  flights found:              4" in report(result)
     out = result.stdout
@@ -255,8 +255,8 @@ def test_a_budget_of_zero_lowers_the_threshold_only_when_nothing_new_must_be_ext
     configure(workspace, "\n[audit]\nsample_size = 25\nauto_include_budget = 0\n")
     free = run(workspace, mbox, "--thoroughness", "thorough")
     assert check_lines(free)[-1] == (
-        "    threshold lowered from 0.05 to 0.02 for this session; 3 more emails extracted, 3 flight emails among "
-        "them (3 of them already extracted by the audit)"
+        "    threshold lowered from 0.05 to 0.02 for this session; 3 emails newly included by the lower threshold "
+        "(3 already read by the check, none read now), 3 of them with flights"
     )
     assert "include: " not in free.stderr
     assert chat_counts(workspace) == {FLIGHT_SUBJECT: 1, **{s: 1 for s in LOW}, NEWSLETTER: 1}

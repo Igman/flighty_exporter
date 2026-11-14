@@ -130,13 +130,18 @@ def outcome_text(summary: IncludeSummary) -> str:
             f"[classify] threshold = {summary.suggested:g} or raise [audit] auto_include_budget to at least "
             f"{summary.would_add}, then run again"
         )
-    text = (
+    ex = summary.extraction
+    read_now = ex.extracted or "none"
+    how = [f"{summary.already_extracted} already read by the check", f"{read_now} read now"]
+    failed = ex.failed + ex.not_in_mailbox
+    if failed:
+        how.append(f"{failed} could not be read")
+    included = len(summary.messages)
+    return (
         f"threshold lowered from {summary.threshold:g} to {summary.suggested:g} for this session; "
-        f"{summary.with_records} more emails extracted, {summary.with_flights} flight emails among them"
+        f"{included} email{'' if included == 1 else 's'} newly included by the lower threshold ({', '.join(how)}), "
+        f"{summary.with_flights} of them with flights"
     )
-    if summary.already_extracted:
-        text += f" ({summary.already_extracted} of them already extracted by the audit)"
-    return text
 
 
 def format_include(summary: IncludeSummary, stopped: bool) -> str:
