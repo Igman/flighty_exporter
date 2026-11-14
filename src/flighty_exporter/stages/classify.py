@@ -31,6 +31,7 @@ from ..mail.reader import Mailbox, Message, Skipped, Unreadable
 from ..ollama.decision import EMAIL_TYPES, DecisionClient, DecisionError
 from ..progress import Progress
 from ..store import CLASSIFY_PASS, Store
+from ..threshold import effective_threshold
 from .summary import failure_lines
 
 PASS_NAME = CLASSIFY_PASS
@@ -167,8 +168,9 @@ def format_summary(summary: ClassifySummary, config: Config, store: Store) -> st
     types = store.email_type_counts(config.decision_model)
     lines.append("")
     lines.append(f"Stored results for {config.decision_model} ({len(gates)} messages):")
-    above = sum(1 for g in gates if g >= config.threshold)
-    lines.append(f"  at or above threshold {config.threshold:g}: {above}")
+    threshold = effective_threshold(config, store)
+    above = sum(1 for g in gates if g >= threshold)
+    lines.append(f"  at or above threshold {threshold:g}: {above}")
     for band in GATE_BANDS:
         lines.append(f"  gate >= {band:g}: {sum(1 for g in gates if g >= band)}")
     for label in EMAIL_TYPES:

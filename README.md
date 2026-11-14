@@ -211,7 +211,7 @@ each stage, PDFs not read, where each file was written, and the next step
 (check the review table, then run `export`). Its review step is `review`'s:
 the table reflects your saved decisions. It takes `--mailbox`, `--store`, `--allow-remote`,
 review's `--output`, `--failures` and `--force`, and `--thoroughness`
-(`quick`, the default, runs no audit; `thorough` is not available yet).
+(`quick`, the default, runs no audit; `thorough` is described below).
 
 Like the single commands, `run` resumes where it stopped: rerun it after Ctrl-C
 (exit status 130) and no finished message is sent to a model again. A
@@ -220,6 +220,32 @@ Like the single commands, `run` resumes where it stopped: rerun it after Ctrl-C
 commands print and exit status 1; it never asks a question. If the review
 table exists and you have edited it, `run` leaves it as it is, says so, and
 still reports the flights; pass `--force` to regenerate it.
+
+**Thorough mode** (`run --thoroughness thorough`, or `thoroughness =
+"thorough"` under `[run]`) adds two stages between extract and review. First
+it runs the [audit](#3-audit-recommended) with your `[audit]` sample size and
+seed, printing its report and writing `audit.csv`. If a sampled message below
+the threshold contained flights, it takes the lower edge of the lowest such
+band as the suggested threshold and counts the messages that lowering to it
+would add and that have no extraction yet. If that count is at most
+`[audit] auto_include_budget` (default 2000), the run lowers the threshold for
+this session and extracts those messages (the ones the audit already
+extracted are not sent again), so their flights appear in the review table.
+Over the budget nothing changes, and the report says what was found, how many
+messages including it would add, and how to include them. The end-of-run
+report has a "check for missed flight emails" section saying which of these
+happened (a Quick run says the check was skipped). This happens once per run;
+a later Thorough run audits again against the lowered threshold, which costs
+little because the sample is the same and finished messages are reused.
+
+The lowered threshold is the session's **effective threshold**: it is stored
+in the store, never written to your config file, and used by every later
+`extract`, `audit`, `review`, `export` and `sources` on that store. Whichever
+is lower wins: setting `[classify] threshold` below the effective threshold
+takes effect, but raising it above the effective threshold does not raise the
+session's threshold again. A Thorough run stopped while it extracts the newly
+included messages keeps the lowered threshold; the next `run` or `extract`
+extracts the rest.
 
 #### Sessions: describing one and starting fresh
 
@@ -238,7 +264,7 @@ uv run flighty-exporter session --fresh-preview
 `session` prints the mailbox (and whether it still exists), the settings, when
 the session started and was last active, how far each stage got (messages
 recorded, classified, resolved from machine-readable data, at or above the
-threshold, extracted, flights and flights with a saved decision), whether it
+threshold in use, extracted, flights and flights with a saved decision), whether it
 looks complete, the files it wrote that still exist, and what starting fresh
 would lose. It reads only the store, and with no store prints
 `No session yet.` `--fresh-preview` lists what starting fresh would delete,
@@ -252,7 +278,9 @@ downloaded models, the cached OpenFlights data, or anything the tool did not
 record writing, such as your own files in the same folder; a recorded path
 that is no longer a regular file is left alone. A store created before
 sessions were recorded knows none of the files it wrote, so starting fresh
-deletes just the store and says so. Without `--fresh`, `run` resumes.
+deletes just the store and says so. Without `--fresh`, `run` resumes. The effective threshold lives in the store,
+so starting fresh clears it too: `run --fresh --thoroughness thorough` starts
+again from the configured threshold and audits anew.
 
 ### 1. classify
 
@@ -359,7 +387,9 @@ The audit never changes the config. If the reading suggests it, lower
 again: only the newly included messages are sent, and messages the audit
 already extracted are not sent again. The same seed (`[audit] seed`,
 `--seed`) gives the same sample, so rerunning the audit sends nothing new.
-The report is also written to `audit.csv`.
+The report is also written to `audit.csv`. (A Thorough `run` acts on the
+reading for you, within a budget, by lowering the threshold for the session
+only; see [All in one go: run](#all-in-one-go-run).)
 
 Time: up to roughly 450 extraction requests at the default sample size (25
 messages for each of 9 bands, twice: once for all messages and once for
@@ -646,7 +676,7 @@ is no config file). An unknown setting is an error.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `threshold` | `0.05` | Gate probability (0 to 1) at or above which a message goes to extract. Not applied by classify. |
+| `threshold` | `0.05` | Gate probability (0 to 1) at or above which a message goes to extract. Not applied by classify. A Thorough run may lower it for its session (the effective threshold); the lower of the two applies. |
 | `max_body_chars` | `12000` | How much of the cleaned body the decision model sees. A message the server still rejects as too long is retried with the body halved, up to 3 times. |
 
 **`[extract]`**
@@ -679,6 +709,7 @@ is no config file). An unknown setting is an error.
 | `sample_size` | `25` | Messages sampled per band. Overridden by `--sample-size`. |
 | `seed` | `1` | Seed for the reproducible sample. Overridden by `--seed`. |
 | `output` | `"audit.csv"` | Audit table. Overridden by `audit --output`. |
+| `auto_include_budget` | `2000` | Thorough runs only: the most not-yet-extracted messages a lowered threshold may add for the run to lower the session's threshold and extract them by itself. `0` lowers it only when the audit already extracted every message it would add. |
 
 **`[export]`**
 
@@ -692,7 +723,7 @@ is no config file). An unknown setting is an error.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `thoroughness` | `"quick"` | How hard `run` looks for flight emails the first filter missed: `"quick"` runs no audit; `"thorough"` is not available yet. Overridden by `run --thoroughness`. |
+| `thoroughness` | `"quick"` | How hard `run` looks for flight emails the first filter missed: `"quick"` runs no audit; `"thorough"` audits after extract and, within `[audit] auto_include_budget`, lowers the session's threshold (see [All in one go: run](#all-in-one-go-run)). Overridden by `run --thoroughness`. |
 
 Every command also accepts `--config FILE` before the command name, e.g.
 `uv run flighty-exporter --config ~/flights/flighty_exporter.toml review`.
@@ -819,8 +850,8 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
 | `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
-| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
-| top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
+| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), `thorough` (what a Thorough run does after its audit), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
+| top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, `tables` (CSV writing and message dates shared by audit, review and export), and `threshold` (the session's effective threshold). |
 
 The dependency rule, enforced by `tests/test_layout.py`:
 
@@ -830,7 +861,7 @@ The dependency rule, enforced by `tests/test_layout.py`:
   a record).
 - `ollama` may import the message type (`mail.reader.Message`) and the record
   types; nothing from `stages`, `output` or the top level.
-- `config`, `store`, `progress` and `tables` may import `flights` only.
+- `config`, `store`, `progress`, `tables` and `threshold` may import `flights` only.
 - `stages` and `output` may import from everything below them, but not from
   each other; neither imports `cli`.
 - `engine` may import `stages`, `output` and everything below them; only

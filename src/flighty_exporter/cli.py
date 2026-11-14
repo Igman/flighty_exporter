@@ -32,6 +32,8 @@ from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Proble
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
 from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
 from .engine.report import format_report
+from .engine.events import AUDIT, INCLUDE, STOPPED
+from .engine.thorough import format_include
 from .flights.decisions import is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
@@ -42,6 +44,7 @@ from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
 from .store import Store
+from .threshold import effective_threshold
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -161,7 +164,7 @@ def cmd_audit(args: argparse.Namespace, config: Config) -> int:
         if not result.classified:
             print(f"error: {audit.no_population_message(result, config)}", file=sys.stderr)
             return EXIT_ERROR
-        audit.write_audit_csv(output, result, config.threshold)
+        audit.write_audit_csv(output, result, effective_threshold(config, store))
         session.record_written(store, session.AUDIT_REPORT, output)
         print(audit.format_report(result, config, store, output))
     return EXIT_OK
@@ -430,6 +433,12 @@ class _RunPrinter:
             print(format_report(event.report))
 
     def _summary(self, event: StageFinished) -> None:
+        if event.stage == AUDIT:
+            self._audit_summary(event)
+            return
+        if event.stage == INCLUDE:
+            print(format_include(event.summary, stopped=event.state == STOPPED))
+            return
         if event.stage in (CLASSIFY, EXTRACT):
             formatter = format_summary if event.stage == CLASSIFY else extract.format_summary
             with Store(self.store_path) as store:
@@ -442,6 +451,16 @@ class _RunPrinter:
             print(review.format_summary(event.summary))
         for warning in review.format_warnings(event.summary):
             _warn(warning)
+
+    def _audit_summary(self, event: StageFinished) -> None:
+        result = event.summary
+        if event.state == STOPPED:
+            print(audit.format_interrupted(result))
+        elif not result.classified:
+            print(audit.no_population_message(result, self.config))
+        else:
+            with Store(self.store_path) as store:
+                print(audit.format_report(result, self.config, store, self.config.audit_output))
 
 
 def cmd_run(args: argparse.Namespace, config: Config) -> int:
@@ -493,7 +512,8 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
         "--thoroughness",
         choices=("quick", "thorough"),
         help="how hard to look for flight emails the first filter missed (overrides [run] thoroughness); "
-        "quick runs no audit",
+        "quick runs no audit; thorough audits after extract and, within [audit] auto_include_budget, lowers the "
+        "threshold for this session",
     )
     parser.add_argument("--output", help="review CSV to write (overrides [review] output in config)")
     parser.add_argument("--failures", help="failures CSV to write (overrides [review] failures in config)")
