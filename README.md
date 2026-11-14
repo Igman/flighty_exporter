@@ -249,6 +249,13 @@ invalid or cut-off answer is retried (`[extract] retries`, default 2) and then
 recorded as a failure. Failed messages are tried again the next time you run
 `extract`.
 
+`extract` (and `audit`) read only the messages they send: `classify` records
+where each message sits in the mbox file, and they go straight there instead
+of reading the whole mailbox again. If the mbox file has changed since
+`classify` (a new export), or the store was made by an earlier version, they
+first scan the mailbox's headers once to find the messages again (shown as
+`extract: locating messages`) and remember what they found.
+
 The summary lists how many messages were selected (`selected (gate >= 0.05)`),
 extracted, already extracted, retried, failed, not found in the mailbox, cut at
 the input limit (`inputs truncated`) and PDFs that could not be read, and then
@@ -637,7 +644,9 @@ Other messages:
 **A store from an older version** of the tool is upgraded automatically the
 first time a command opens it; nothing needs to be redone. (A store written by
 a version that did not record PDF attachments has them filled in by the next
-`audit`, with one extra scan of the mailbox.)
+`audit`, with one extra scan of the mailbox. One written before message
+positions were recorded has them found by the next `extract` or `audit`, with
+one scan of the mailbox's headers.)
 
 **Forcing reclassification.** Results are stored per model name, so changing
 `[models] decision` (or `extraction`) makes the next run classify (or extract)

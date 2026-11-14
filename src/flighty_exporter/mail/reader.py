@@ -45,14 +45,15 @@ from __future__ import annotations
 
 import codecs
 import hashlib
-import mailbox
+import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from email import policy
 from email.message import EmailMessage
-from email.parser import BytesParser
+from email.parser import BytesHeaderParser, BytesParser
 from pathlib import Path
+from typing import BinaryIO
 
 from .html_text import html_to_text, tidy_lines
 from .pdf_text import PdfNotRead, read_pdf_text
@@ -113,27 +114,127 @@ class MailboxError(Exception):
 class Mailbox:
     """An mbox file opened for reading. ``len()`` is the number of entries.
 
-    With ``read_pdfs``, the text layer of PDF attachments is read too."""
+    With ``read_pdfs``, the text layer of PDF attachments is read too.
+
+    Each entry has a **position**: the byte offset of its "From " separator
+    line. ``entry_at`` and ``identifier_at`` read the one entry at a position
+    without looking at any other; iterating (or ``len``) first indexes the
+    file with a scan for separator lines, as Python's ``mailbox.mbox`` does,
+    and entries split exactly as it splits them."""
 
     def __init__(self, path: Path, *, read_pdfs: bool = False):
         if not path.is_file():
             raise MailboxError(f"mailbox file not found: {path}")
         self.path = path
         self.read_pdfs = read_pdfs
-        # mailbox.mbox scans the file once to index message offsets; messages
-        # are then read one at a time, so memory stays flat for large exports.
-        self._box = mailbox.mbox(str(path), create=False)
-        self._keys = list(self._box.keys())
+        self._file = path.open("rb")
+        # (start, stop) per entry, built on first use; messages are then read
+        # one at a time, so memory stays flat for large exports.
+        self._toc: list[tuple[int, int]] | None = None
 
     def __len__(self) -> int:
-        return len(self._keys)
+        return len(self._index())
 
     def __iter__(self) -> Iterator[Entry]:
-        for key in self._keys:
-            yield read_entry(self._box.get_bytes(key), read_pdfs=self.read_pdfs)
+        for _, entry in self.positioned():
+            yield entry
+
+    def positioned(self) -> Iterator[tuple[int, Entry]]:
+        """Every entry with its position, in mailbox order."""
+        for start, stop in self._index():
+            yield start, read_entry(self._raw(start, stop), read_pdfs=self.read_pdfs)
+
+    def entry_at(self, position: int) -> Entry | None:
+        """The entry at ``position``, or None if no entry starts there."""
+        bounds = self._bounds_at(position)
+        return None if bounds is None else read_entry(self._raw(*bounds), read_pdfs=self.read_pdfs)
+
+    def identifier_at(self, position: int) -> str | None:
+        """The identifier of the message at ``position``, read from its
+        headers only; None if no entry starts there or it is skipped."""
+        bounds = self._bounds_at(position)
+        return None if bounds is None else identify(self._raw(*bounds))
+
+    def identifiers(self) -> Iterator[tuple[int, str | None]]:
+        """(position, identifier) of every entry in mailbox order, read from
+        the headers only (no body is parsed); the identifier is None for a
+        skipped message."""
+        for start, stop in self._index():
+            yield start, identify(self._raw(start, stop))
 
     def close(self) -> None:
-        self._box.close()
+        self._file.close()
+
+    def _index(self) -> list[tuple[int, int]]:
+        if self._toc is None:
+            self._toc = list(_table_of_contents(self._file))
+        return self._toc
+
+    def _bounds_at(self, position: int) -> tuple[int, int] | None:
+        if position < 0:
+            return None
+        if position > 0:
+            self._file.seek(position - 1)
+            if self._file.read(1) != b"\n":
+                return None
+        self._file.seek(position)
+        if not self._file.readline().startswith(b"From "):
+            return None
+        return position, _message_end(self._file)
+
+    def _raw(self, start: int, stop: int) -> bytes:
+        self._file.seek(start)
+        self._file.readline()  # the "From " separator line
+        return self._file.read(stop - self._file.tell()).replace(_LINESEP, b"\n")
+
+
+# Entries are split as mailbox.mbox splits them, so that identifiers derived
+# from content stay the same.
+_LINESEP = os.linesep.encode()
+
+
+def _table_of_contents(handle: BinaryIO) -> Iterator[tuple[int, int]]:
+    handle.seek(0)
+    while True:  # anything before the first separator line is not an entry
+        position = handle.tell()
+        line = handle.readline()
+        if not line:
+            return
+        if line.startswith(b"From "):
+            handle.seek(position)
+            break
+    while True:
+        start = handle.tell()
+        if not handle.readline():
+            return
+        yield start, _message_end(handle)
+
+
+def _message_end(handle: BinaryIO) -> int:
+    """Read on from just after a separator line to the end of the entry;
+    return where it stops (a blank line before the next separator belongs to
+    neither), leaving ``handle`` at the next separator line or the end."""
+    last_was_empty = False
+    while True:
+        position = handle.tell()
+        line = handle.readline()
+        if not line or line.startswith(b"From "):
+            handle.seek(position)
+            return position - len(_LINESEP) if last_was_empty else position
+        last_was_empty = line == _LINESEP
+
+
+def identify(raw: bytes) -> str | None:
+    """The identifier ``read_entry`` would give, from the headers alone;
+    None for a message under a skipped label."""
+    try:
+        headers = BytesHeaderParser(policy=policy.default).parsebytes(raw)
+        labels = _labels(headers)
+    except Exception:  # noqa: BLE001 - as in read_entry, fall back to content
+        return content_identifier(raw)
+    if SKIPPED_LABELS.intersection(label.lower() for label in labels):
+        return None
+    return _message_id(headers) or content_identifier(raw)
 
 
 def read_entry(raw: bytes, *, read_pdfs: bool = False) -> Entry:

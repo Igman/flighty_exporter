@@ -9,6 +9,9 @@ The check is cheap, so it runs for every message without a markup record yet,
 including ones a model classified in an earlier run; from then on the markup
 record takes precedence over any model extraction for that message.
 
+Every message recorded in the store is recorded with its position in the
+mailbox file, so that extract and audit can read it directly.
+
 The threshold is never applied here; it only selects messages for extraction.
 """
 
@@ -59,7 +62,7 @@ def run_classify(
     resolved = store.markup_ids()
     progress = Progress(summary.total, "classify", progress_stream)
     try:
-        for entry in mbox:
+        for position, entry in mbox.positioned():
             if isinstance(entry, Skipped):
                 summary.skipped += 1
                 progress.advance()
@@ -71,7 +74,7 @@ def run_classify(
             elif entry.identifier in resolved:
                 summary.already_resolved_from_markup += 1
                 progress.advance()
-            elif _resolve_from_markup(entry, store):
+            elif _resolve_from_markup(entry, position, store):
                 resolved.add(entry.identifier)
                 summary.resolved_from_markup += 1
                 progress.advance()
@@ -80,7 +83,7 @@ def run_classify(
                 progress.advance()
             else:
                 started = time.monotonic()
-                _classify_one(entry, store, client, summary)
+                _classify_one(entry, position, store, client, summary)
                 done.add(entry.identifier)
                 progress.advance(time.monotonic() - started)
     except BaseException as exc:
@@ -93,23 +96,26 @@ def run_classify(
     return summary
 
 
-def _record_message(message: Message, store: Store) -> None:
+def _record_message(message: Message, position: int, store: Store) -> None:
     store.record_message(
-        message.identifier, message.sender, message.subject, message.date, message.labels, message.has_pdf_attachment
+        message.identifier, message.sender, message.subject, message.date, message.labels, message.has_pdf_attachment,
+        position,
     )
 
 
-def _resolve_from_markup(message: Message, store: Store) -> bool:
+def _resolve_from_markup(message: Message, position: int, store: Store) -> bool:
     record = parse_markup(message.html_parts, message.calendar_texts)
     if record is None:
         return False
-    _record_message(message, store)
+    _record_message(message, position, store)
     store.save_markup(message.identifier, record)
     return True
 
 
-def _classify_one(message: Message, store: Store, client: DecisionClient, summary: ClassifySummary) -> None:
-    _record_message(message, store)
+def _classify_one(
+    message: Message, position: int, store: Store, client: DecisionClient, summary: ClassifySummary
+) -> None:
+    _record_message(message, position, store)
     try:
         decision = client.decide(message)
     except DecisionError as exc:

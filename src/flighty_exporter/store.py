@@ -10,7 +10,10 @@ Tables (extended by later passes):
 - ``messages``: identifier, sender, subject, date, labels, and whether the
   message has a PDF attachment (``has_pdf``: 1/0, NULL if unknown because the
   message was recorded before this was stored). Enough to list a message in
-  the failures file, and to audit it, without rereading the mbox.
+  the failures file, and to audit it, without rereading the mbox. Also the
+  message's position in the mailbox file (``mbox_offset``: the byte offset of
+  its separator line, NULL if not known), so extract and audit can read it
+  without reading the others; it is checked against the identifier before use.
 - ``classifications``: the classify pass result per message.
 - ``extractions``: the validated extraction record per message, and whether
   its input was cut at the extraction character budget (``input_truncated``).
@@ -37,7 +40,7 @@ from pathlib import Path
 
 from .flights.records import MARKUP_SOURCE, Decision, Extraction, ExtractionRecord
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # The passes that record failures, as named in the ``failures`` table.
 CLASSIFY_PASS = "classify"
@@ -50,7 +53,8 @@ CREATE TABLE IF NOT EXISTS messages (
     subject TEXT NOT NULL DEFAULT '',
     date TEXT NOT NULL DEFAULT '',
     labels TEXT NOT NULL DEFAULT '',
-    has_pdf INTEGER
+    has_pdf INTEGER,
+    mbox_offset INTEGER
 );
 CREATE TABLE IF NOT EXISTS classifications (
     message_id TEXT PRIMARY KEY REFERENCES messages(message_id),
@@ -112,6 +116,9 @@ class Store:
         if "has_pdf" not in columns:
             # Existing rows: unknown (NULL) until the audit's mailbox scan fills them in.
             self._db.execute("ALTER TABLE messages ADD COLUMN has_pdf INTEGER")
+        if "mbox_offset" not in columns:
+            # Existing rows: unknown (NULL) until extract or audit finds them by scanning.
+            self._db.execute("ALTER TABLE messages ADD COLUMN mbox_offset INTEGER")
 
     def close(self) -> None:
         self._db.close()
@@ -132,18 +139,38 @@ class Store:
         date: str,
         labels: tuple[str, ...],
         has_pdf: bool | None = None,
+        position: int | None = None,
     ) -> None:
         self._db.execute(
-            "INSERT INTO messages (message_id, sender, subject, date, labels, has_pdf) VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO messages (message_id, sender, subject, date, labels, has_pdf, mbox_offset) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(message_id) DO UPDATE SET sender=excluded.sender, subject=excluded.subject, "
-            "date=excluded.date, labels=excluded.labels, has_pdf=COALESCE(excluded.has_pdf, messages.has_pdf)",
-            (message_id, sender, subject, date, ",".join(labels), None if has_pdf is None else int(has_pdf)),
+            "date=excluded.date, labels=excluded.labels, has_pdf=COALESCE(excluded.has_pdf, messages.has_pdf), "
+            "mbox_offset=COALESCE(excluded.mbox_offset, messages.mbox_offset)",
+            (
+                message_id, sender, subject, date, ",".join(labels), None if has_pdf is None else int(has_pdf),
+                position,
+            ),
         )
 
     def set_has_pdf(self, message_id: str, has_pdf: bool) -> None:
         """Fill in whether a message has a PDF attachment (not committed:
         call ``commit``)."""
         self._db.execute("UPDATE messages SET has_pdf = ? WHERE message_id = ?", (int(has_pdf), message_id))
+
+    def message_positions(self, message_ids: set[str]) -> dict[str, int | None]:
+        """The recorded mailbox position of each message (None if unknown)."""
+        rows = self._db.execute("SELECT message_id, mbox_offset FROM messages")
+        return {message_id: offset for message_id, offset in rows if message_id in message_ids}
+
+    def record_positions(self, positions: dict[str, int]) -> None:
+        """Record where messages are in the mailbox file; identifiers the
+        store does not hold are ignored."""
+        with self._write():
+            self._db.executemany(
+                "UPDATE messages SET mbox_offset = ? WHERE message_id = ?",
+                [(offset, message_id) for message_id, offset in positions.items()],
+            )
 
     # -- classify pass --------------------------------------------------------
 
