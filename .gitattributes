@@ -1,0 +1,5 @@
+# Check out text files with LF on every system, as they are committed, so a
+# Windows checkout (where Git converts to CRLF by default) matches macOS and
+# Linux. Mailbox files are data whose bytes the tests depend on: never convert.
+* text=auto eol=lf
+*.mbox -text

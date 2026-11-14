@@ -10,6 +10,8 @@ import re
 import sqlite3
 import subprocess
 import time
+from contextlib import closing
+from pathlib import Path
 
 from fake_ollama import Decision
 from mailbox_fixtures import email, write_mbox
@@ -208,7 +210,8 @@ def test_the_report_lists_the_files_the_session_recorded(workspace):
     result = run(workspace, "--mailbox", str(mbox), "--output", "out/review.csv", "--failures", "out/failures.csv")
 
     report = result.stdout[result.stdout.index("Files written:"):].splitlines()
-    assert report[1:3] == ["  review table: out/review.csv", "  failures file: out/failures.csv"]
+    assert report[1:3] == [f"  review table: {Path('out', 'review.csv')}",
+                           f"  failures file: {Path('out', 'failures.csv')}"]
     root = workspace.root.resolve()
     assert files_section(session(workspace)) == [
         f"  review table: {root / 'out' / 'review.csv'}",
@@ -274,7 +277,7 @@ def run_without_input(workspace, *args: str) -> subprocess.CompletedProcess[str]
     """Run the command with no input at all: a prompt would fail or hang."""
     return subprocess.run(
         workspace.command(*args), cwd=workspace.root, env=workspace.env(), stdin=subprocess.DEVNULL,
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, encoding="utf-8", timeout=60,
     )
 
 
@@ -368,7 +371,8 @@ def test_run_without_fresh_resumes_and_keeps_the_session(workspace):
 def test_a_store_from_before_sessions_is_described_and_cleared(workspace):
     mbox = mailbox(workspace)
     run(workspace, "--mailbox", str(mbox))
-    with sqlite3.connect(workspace.root / STORE) as db:
+    # Closed, not only committed: Windows cannot delete a file that is open.
+    with closing(sqlite3.connect(workspace.root / STORE)) as db, db:
         db.execute("DROP TABLE written_files")
         db.execute("DELETE FROM session_values")
 

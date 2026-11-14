@@ -43,7 +43,7 @@ For the export screen and ``export --dry-run``: ``plan_store_export`` says
 what ``run_store_export`` would write without writing anything (the latter
 writes exactly that plan); ``refresh_manual_add`` rewrites a written
 manual-add list with the current ticks only; ``reveal`` shows a file in the
-system file manager (macOS only); ``FLIGHTY_IMPORT_STEPS`` is the verified
+system file manager (macOS and Windows); ``FLIGHTY_IMPORT_STEPS`` is the verified
 import procedure.
 """
 
@@ -752,16 +752,24 @@ twice. Flighty documents support only for files exported by OpenFlights itself, 
 
 def reveal_command(path: Path, platform: str = sys.platform) -> list[str] | None:
     """The command that shows ``path`` selected in the system file manager,
-    or None where that is not supported (only macOS is: ``open -R``)."""
+    or None where that is not supported (macOS: ``open -R``; Windows:
+    ``explorer /select,``)."""
     if platform == "darwin":
         return ["open", "-R", str(path)]
+    if platform == "win32":
+        return ["explorer", f"/select,{path.resolve()}"]
     return None
 
 
-def reveal(path: Path) -> bool:
+def file_manager_name(platform: str = sys.platform) -> str:
+    """What the system file manager is called, for the export screen."""
+    return {"darwin": "Finder", "win32": "File Explorer"}.get(platform, "the file manager")
+
+
+def reveal(path: Path, platform: str = sys.platform) -> bool:
     """Show ``path`` in the system file manager. False if this system is not
     supported or the command could not be run: the caller shows the path."""
-    command = reveal_command(path)
+    command = reveal_command(path, platform)
     if command is None:
         return False
     try:
@@ -769,4 +777,5 @@ def reveal(path: Path) -> bool:
                                    stderr=subprocess.DEVNULL, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return False
-    return completed.returncode == 0
+    # explorer.exe exits with 1 even when it has opened the window.
+    return platform == "win32" or completed.returncode == 0

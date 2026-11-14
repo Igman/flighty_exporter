@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fake_ollama import Chat, Decision, chat_user_text
 from mailbox_fixtures import email, text_pdf, write_mbox
+from stop_signals import POSIX_ONLY_CTRL_C
 from test_extract import FLIGHT_BODY, header, read_csv
 from test_markup import flight_reservation, json_ld_html, markup_email
 
@@ -406,6 +407,7 @@ def test_store_from_before_pdf_attachments_were_recorded_still_works(workspace):
 # -- interruptions and edge cases ----------------------------------------------------
 
 
+@POSIX_ONLY_CTRL_C
 def test_interrupted_audit_resumes_without_resending(workspace):
     subjects = [f"Low-scoring message {i}" for i in range(6)]
     mbox = write_mbox(workspace.root / "mail.mbox", [email(s) for s in subjects])
@@ -470,7 +472,7 @@ def test_output_path_and_sample_size_validation(workspace):
 
     result = audit(workspace, mbox, "--output", "reports/my-audit.csv")
     assert (workspace.root / "reports" / "my-audit.csv").exists()
-    assert "Audit table written to reports/my-audit.csv" in result.stdout
+    assert f"Audit table written to {Path('reports', 'my-audit.csv')}" in result.stdout
 
     configure(workspace, '[audit]\noutput = "elsewhere.csv"\n')
     audit(workspace, mbox)

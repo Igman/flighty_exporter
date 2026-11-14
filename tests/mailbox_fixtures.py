@@ -45,14 +45,21 @@ def email(
 
 
 def write_mbox(path: Path, messages: list[EmailMessage | bytes]) -> Path:
-    """Write messages (EmailMessage objects or raw RFC 822 bytes) to an mbox."""
-    box = mailbox.mbox(str(path), create=True)
+    """Write messages (EmailMessage objects or raw RFC 822 bytes) to an mbox,
+    with LF line endings on every system as Gmail Takeout writes them
+    (``mailbox`` would use CRLF on Windows)."""
+    platform_linesep = mailbox.linesep
+    mailbox.linesep = b"\n"
     try:
-        for message in messages:
-            box.add(message)
-        box.flush()
+        box = mailbox.mbox(str(path), create=True)
+        try:
+            for message in messages:
+                box.add(message)
+            box.flush()
+        finally:
+            box.close()
     finally:
-        box.close()
+        mailbox.linesep = platform_linesep
     return path
 
 

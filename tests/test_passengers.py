@@ -321,7 +321,7 @@ def test_dropped_bookings_list_is_capped_at_twenty_lines(workspace):
 
 def test_export_ignores_the_attention_columns(workspace):
     data_dir = write_reference_data(workspace.root / "openflights")
-    names_config(workspace, ROBIN, extra=f'\n[export]\ndata_dir = "{data_dir}"\ndata_url = "{unreachable_url()}"\n')
+    names_config(workspace, ROBIN, extra=f'\n[export]\ndata_dir = "{data_dir.as_posix()}"\ndata_url = "{unreachable_url()}"\n')
     review, rows = run(workspace, [
         booking("Your itinerary EXP111", "01", "EXP111", seg("2025-05-12", "ZZ1234", "LIS", "OSL"), passengers=()),
     ], name="review")

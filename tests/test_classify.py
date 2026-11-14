@@ -7,6 +7,7 @@ import threading
 
 from fake_ollama import Decision
 from mailbox_fixtures import FLIGHT_BODY, email, write_mbox
+from stop_signals import POSIX_ONLY_CTRL_C
 
 EMAIL_TYPES = [
     "booking confirmation",
@@ -288,6 +289,7 @@ def test_failed_request_is_recorded_and_retried_on_rerun(workspace):
     assert second.count("failed") == 0
 
 
+@POSIX_ONLY_CTRL_C
 def test_interrupted_run_resumes_without_resending(workspace):
     subjects = [f"Invented message number {i}" for i in range(8)]
     mbox = write_mbox(workspace.root / "mail.mbox", [email(s) for s in subjects])

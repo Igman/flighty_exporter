@@ -27,6 +27,7 @@ to the store are held, so a failed check leaves the store as it was.
 from __future__ import annotations
 
 import argparse
+import io
 import signal
 import sys
 from collections.abc import Callable
@@ -55,13 +56,17 @@ from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
 from .store import Store
+from .tables import FileInUse
 from .threshold import effective_threshold
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
-EXIT_STOPPED = 143  # run asked to stop (SIGTERM) between messages
+EXIT_STOPPED = 143  # run asked to stop (SIGTERM; Ctrl+Break on Windows) between messages
+# The signals that ask ``run`` to stop after the message in progress. Windows
+# cannot send SIGTERM to a process, so there Ctrl+Break (SIGBREAK) asks instead.
+STOP_SIGNALS = (signal.SIGTERM, *((signal.SIGBREAK,) if hasattr(signal, "SIGBREAK") else ()))
 
 
 class UsageError(Exception):
@@ -583,8 +588,8 @@ def cmd_run(args: argparse.Namespace, config: Config) -> int:
         for line in session.format_fresh(session.start_fresh(store_path)):
             print(line)
     stop_requested: list[int] = []
-    # SIGTERM asks the run to stop after the message in progress.
-    previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop_requested.append(signum))
+    # SIGTERM (Ctrl+Break on Windows) asks the run to stop after the message in progress.
+    previous = {sig: signal.signal(sig, lambda signum, frame: stop_requested.append(signum)) for sig in STOP_SIGNALS}
     try:
         result = run_pipeline(
             config,
@@ -605,7 +610,8 @@ def cmd_run(args: argparse.Namespace, config: Config) -> int:
         print(f"Interrupted. {RUN_RESUME}", file=sys.stderr)
         return EXIT_INTERRUPTED
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     if result.state == STOPPED_BY_PROBLEM:
         if result.problem is not None and result.problem.kind == UNREACHABLE:
             print(RUN_RESUME, file=sys.stderr)
@@ -849,7 +855,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utf8_output() -> None:
+    """Print UTF-8 whatever the system's default: on Windows a pipe or a
+    redirected file otherwise gets the ANSI code page, which cannot encode
+    many names and airports (and the output would differ from macOS)."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper) and stream.encoding.lower().replace("-", "") != "utf8":
+            stream.reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None and not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -869,7 +885,7 @@ def main(argv: list[str] | None = None) -> int:
     except UsageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    except (ConfigError, MailboxError, PreflightError) as exc:
+    except (ConfigError, MailboxError, PreflightError, FileInUse) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except KeyboardInterrupt:

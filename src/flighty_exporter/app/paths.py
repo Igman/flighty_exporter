@@ -4,6 +4,7 @@ path separator rather than in the middle of a name."""
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 WIDTH = 60
@@ -31,17 +32,22 @@ def path_text(path: Path | str, indent: str = "") -> str:
     return "\n".join(indent + line for line in path_lines(path))
 
 
+# "label: " then an absolute path: /a/path, or on Windows C:\a\path or \\server\share.
+_LABELLED_PATH = re.compile(r"(.*?): (/.*|[A-Za-z]:\\.*|\\\\.*)$")
+
+
 def wrap_path_lines(text: str) -> str:
     """``text`` with every over-long line of the form "label: /a/path" put
     as the label, then the path on lines of its own under it (the report's
     "Files written", the lines starting fresh prints)."""
     out = []
     for line in text.split("\n"):
-        label, separator, rest = line.partition(": /")
-        if separator and len(line) > WIDTH:
+        match = _LABELLED_PATH.match(line)
+        if match and len(line) > WIDTH:
+            label, path = match.groups()
             indent = " " * (len(label) - len(label.lstrip()) + 2)
             out.append(f"{label}:")
-            out.append(path_text("/" + rest, indent))
+            out.append(path_text(path, indent))
         else:
             out.append(line)
     return "\n".join(out)

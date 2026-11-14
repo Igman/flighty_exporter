@@ -11,9 +11,12 @@ and exit status.
 from __future__ import annotations
 
 import subprocess
+import sys
 import tomllib
 import zipfile
 from pathlib import Path
+
+import pytest
 
 from mailbox_fixtures import email, write_mbox
 
@@ -121,7 +124,7 @@ def test_setup_replaces_the_three_values_in_place_and_keeps_everything_else(work
     result = workspace.run("setup", "--mailbox", str(box), "--name", "Robin Quill", "--thoroughness", "thorough")
 
     assert result.returncode == 0, result.stderr
-    assert workspace.config_path.read_text() == f"""\
+    assert workspace.config_path.read_text(encoding="utf-8") == f"""\
 # My settings for the invented mailbox.
 store = "trial.db"   # kept next to this file
 mailbox = "mail.mbox"
@@ -153,7 +156,7 @@ def test_setup_replaces_an_existing_mailbox_line_keeping_its_comment(workspace):
     result = workspace.run("setup", "--mailbox", str(other))
 
     assert result.returncode == 0, result.stderr
-    assert workspace.config_path.read_text() == (
+    assert workspace.config_path.read_text(encoding="utf-8") == (
         f'mailbox = "other.mbox"  # the export\n\n[ollama]\naddress = "{workspace.ollama.url}"\n'
         '\n[passenger]\nnames = []\n\n[run]\nthoroughness = "quick"\n'
     )
@@ -163,7 +166,7 @@ def test_setup_fills_in_the_example_config(workspace):
     """The example file has a commented-out mailbox line, `names = []` and
     `thoroughness = "quick"`: the mailbox goes under its example, the other
     two are replaced, and nothing else changes."""
-    example = (Path(__file__).resolve().parents[1] / "flighty_exporter.example.toml").read_text()
+    example = (Path(__file__).resolve().parents[1] / "flighty_exporter.example.toml").read_text(encoding="utf-8")
     example = example.replace('address = "http://localhost:11434"', f'address = "{workspace.ollama.url}"')
     workspace.write_config(example)
     box = mbox(workspace)
@@ -175,7 +178,7 @@ def test_setup_fills_in_the_example_config(workspace):
         '# mailbox = "Takeout/Mail/All mail Including Spam and Trash.mbox"\n',
         '# mailbox = "Takeout/Mail/All mail Including Spam and Trash.mbox"\nmailbox = "mail.mbox"\n',
     ).replace("\nnames = []\n", '\nnames = ["Robin Quill"]\n')
-    assert workspace.config_path.read_text() == expected
+    assert workspace.config_path.read_text(encoding="utf-8") == expected
 
 
 def test_setup_adds_missing_sections_at_the_end(workspace):
@@ -186,7 +189,7 @@ def test_setup_adds_missing_sections_at_the_end(workspace):
     result = workspace.run("setup", "--mailbox", str(box), "--name", "Robin Quill")
 
     assert result.returncode == 0, result.stderr
-    assert workspace.config_path.read_text() == (
+    assert workspace.config_path.read_text(encoding="utf-8") == (
         'mailbox = "mail.mbox"\n\n'
         + text
         + '\n[passenger]\nnames = ["Robin Quill"]\n\n[run]\nthoroughness = "quick"\n'
@@ -204,7 +207,7 @@ def test_setup_adds_a_missing_setting_to_an_existing_section(workspace):
     result = workspace.run("setup", "--mailbox", str(box), "--thoroughness", "thorough")
 
     assert result.returncode == 0, result.stderr
-    assert workspace.config_path.read_text() == (
+    assert workspace.config_path.read_text(encoding="utf-8") == (
         f'mailbox = "mail.mbox"\n\n[ollama]\naddress = "{workspace.ollama.url}"\n\n'
         '[run]\n# nothing here yet\nthoroughness = "thorough"\n\n[passenger]\nnames = []\n'
     )
@@ -244,10 +247,10 @@ def test_a_config_in_another_folder_gets_a_path_that_resolves_to_the_same_file(w
     command = workspace.command("setup", "--mailbox", "mail.mbox")
     command[command.index("--config") + 1] = str(config_dir / "flighty_exporter.toml")
 
-    proc = subprocess.run(command, cwd=workspace.root, env=workspace.env(), capture_output=True, text=True)
+    proc = subprocess.run(command, cwd=workspace.root, env=workspace.env(), capture_output=True, encoding="utf-8")
 
     assert proc.returncode == 0, proc.stderr
-    data = tomllib.loads((config_dir / "flighty_exporter.toml").read_text())
+    data = tomllib.loads((config_dir / "flighty_exporter.toml").read_text(encoding="utf-8"))
     assert data["mailbox"] == str(box)
     assert (config_dir / data["mailbox"]).resolve() == box.resolve()
 
@@ -263,10 +266,10 @@ def test_a_config_folder_reached_through_a_symbolic_link_still_gets_a_relative_p
     command = workspace.command("setup", "--mailbox", str(box))
     command[command.index("--config") + 1] = str(config_path)
 
-    proc = subprocess.run(command, cwd=workspace.root, env=workspace.env(), capture_output=True, text=True)
+    proc = subprocess.run(command, cwd=workspace.root, env=workspace.env(), capture_output=True, encoding="utf-8")
 
     assert proc.returncode == 0, proc.stderr
-    assert tomllib.loads(config_path.read_text())["mailbox"] == "mail.mbox"
+    assert tomllib.loads(config_path.read_text(encoding="utf-8"))["mailbox"] == "mail.mbox"
 
 
 def test_the_written_mailbox_is_the_one_the_commands_read(workspace):
@@ -291,12 +294,12 @@ def assert_refused(result, *phrases: str) -> None:
 
 
 def test_a_missing_mailbox_file_is_refused_and_nothing_is_written(workspace):
-    before = workspace.config_path.read_text()
+    before = workspace.config_path.read_text(encoding="utf-8")
 
     result = workspace.run("setup", "--mailbox", "nowhere.mbox")
 
     assert_refused(result, f"There is no file at {workspace.root / 'nowhere.mbox'}.")
-    assert workspace.config_path.read_text() == before
+    assert workspace.config_path.read_text(encoding="utf-8") == before
 
 
 def test_a_missing_config_is_not_created_for_a_bad_answer(workspace):
@@ -358,6 +361,7 @@ def test_an_empty_file_is_refused(workspace):
     assert_refused(result, "empty.mbox is empty.")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot make a file unreadable on Windows")
 def test_an_unreadable_file_is_refused(workspace):
     box = mbox(workspace)
     box.chmod(0)
@@ -371,12 +375,12 @@ def test_an_unreadable_file_is_refused(workspace):
 
 def test_a_name_that_is_only_a_title_is_refused(workspace):
     box = mbox(workspace)
-    before = workspace.config_path.read_text()
+    before = workspace.config_path.read_text(encoding="utf-8")
 
     result = workspace.run("setup", "--mailbox", str(box), "--name", "Robin Quill", "--name", "Mr")
 
     assert_refused(result, "'Mr' is not a name")
-    assert workspace.config_path.read_text() == before
+    assert workspace.config_path.read_text(encoding="utf-8") == before
 
 
 def test_a_config_file_that_cannot_be_read_is_left_alone(workspace):
@@ -386,7 +390,7 @@ def test_a_config_file_that_cannot_be_read_is_left_alone(workspace):
     result = workspace.run("setup", "--mailbox", str(box))
 
     assert_refused(result, f"cannot read config file {workspace.config_path}")
-    assert workspace.config_path.read_text() == "[ollama\naddress = \n"
+    assert workspace.config_path.read_text(encoding="utf-8") == "[ollama\naddress = \n"
 
 
 def test_a_config_the_loader_would_reject_is_not_written(workspace):
@@ -397,7 +401,7 @@ def test_a_config_the_loader_would_reject_is_not_written(workspace):
     result = workspace.run("setup", "--mailbox", str(box))
 
     assert_refused(result, "threshold must be between 0 and 1")
-    assert workspace.config_path.read_text() == text
+    assert workspace.config_path.read_text(encoding="utf-8") == text
     assert [p.name for p in workspace.root.iterdir() if p.name.startswith(".")] == []
 
 

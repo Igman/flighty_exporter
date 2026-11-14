@@ -22,6 +22,11 @@ from openflights_fixtures import write_reference_data
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
+# A command started in the background gets its own process group on Windows,
+# so that a test can send it Ctrl+Break (see ``stop_signals``) without
+# reaching pytest itself.
+NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
 
 @dataclass
 class Result:
@@ -43,9 +48,10 @@ class Workspace:
 
     @property
     def home(self) -> Path:
-        """HOME for the commands: its default OpenFlights cache holds the
-        fixture reference data, so a config without ``[export] data_dir``
-        never reads the user's cache or the network."""
+        """The home folder for the commands (HOME, and USERPROFILE, which is
+        what Windows reads): its default OpenFlights cache holds the fixture
+        reference data, so a config without ``[export] data_dir`` never reads
+        the user's cache or the network."""
         return self.root / "home"
 
     @property
@@ -61,7 +67,7 @@ class Workspace:
         if text is None:
             address = ollama_overrides.get("address", self.ollama.url)
             text = f'[ollama]\naddress = "{address}"\n'
-        self.config_path.write_text(text)
+        self.config_path.write_text(text, encoding="utf-8")
         if pulled:
             try:
                 models = tomllib.loads(text).get("models", {})
@@ -79,7 +85,7 @@ class Workspace:
         env = dict(os.environ)
         env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
         env["PYTHONUNBUFFERED"] = "1"
-        env["HOME"] = str(self.home)
+        env["HOME"] = env["USERPROFILE"] = str(self.home)
         return env
 
     def run(self, *args: str, timeout: float = 60) -> Result:
@@ -88,7 +94,7 @@ class Workspace:
             cwd=self.root,
             env=self.env(),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=timeout,
         )
         return Result(proc.returncode, proc.stdout, proc.stderr)
@@ -100,7 +106,8 @@ class Workspace:
             env=self.env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            creationflags=NEW_PROCESS_GROUP,
         )
 
 

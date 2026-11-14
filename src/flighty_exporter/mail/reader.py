@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import codecs
 import hashlib
-import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -200,9 +199,11 @@ class Mailbox:
         return self._file.read(stop - self._file.tell()).replace(_LINESEP, b"\n")
 
 
-# Entries are split as mailbox.mbox splits them, so that identifiers derived
-# from content stay the same.
-_LINESEP = os.linesep.encode()
+# Entries are split as mailbox.mbox splits them on macOS and Linux, so that
+# identifiers derived from content stay the same. mailbox.mbox takes the
+# platform's line separator (CRLF on Windows), but an mbox file is the same
+# file whichever system reads it, so this is always LF.
+_LINESEP = b"\n"
 
 
 def _table_of_contents(handle: BinaryIO) -> Iterator[tuple[int, int]]:

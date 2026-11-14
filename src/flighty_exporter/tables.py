@@ -13,6 +13,11 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 
+class FileInUse(PermissionError):
+    """A table could not be replaced because another program holds it open:
+    on Windows, a spreadsheet application locks the file it has open."""
+
+
 def write_csv(path: Path, columns: tuple[str, ...], rows: list[dict[str, str]]) -> None:
     """Write ``rows`` atomically as UTF-8 with a byte-order mark, so
     spreadsheets detect the encoding."""
@@ -22,7 +27,14 @@ def write_csv(path: Path, columns: tuple[str, ...], rows: list[dict[str, str]]) 
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
-    tmp.replace(path)
+    try:
+        tmp.replace(path)
+    except PermissionError as exc:
+        tmp.unlink(missing_ok=True)
+        raise FileInUse(
+            f"cannot write {path}: it may be open in another program, such as a spreadsheet. "
+            "Close it there and try again."
+        ) from exc
 
 
 def format_message_date(raw: str) -> tuple[str, str]:
