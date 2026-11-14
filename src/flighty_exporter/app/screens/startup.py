@@ -57,10 +57,13 @@ def describe_lines(d: SessionDescription) -> list[str]:
     lines.append("")
     lines.append("[b]How far it got[/b]")
     read = d.classified + d.resolved_from_markup
-    lines.append(
-        f"  classify   {read:,} of {d.messages:,} recorded emails read"
-        + (f" ({d.resolved_from_markup:,} from machine-readable flight data)" if d.resolved_from_markup else "")
-    )
+    details = []
+    if d.resolved_from_markup:
+        details.append(f"{d.resolved_from_markup:,} from machine-readable flight data")
+    if d.messages > read:
+        details.append(f"{d.messages - read:,} not classified yet")
+    lines.append(f"  classify   {read:,} emails read" + (f" ({'; '.join(details)})" if details else ""))
+    lines.append(f"             ({escape(session.NOT_COUNTED)})")
     lines.append(
         f"  extract    {d.extracted:,} of {d.candidates:,} likely flight emails extracted"
         + (f" ({d.extraction_failed:,} could not be read)" if d.extraction_failed else "")

@@ -11,8 +11,10 @@ import sqlite3
 import subprocess
 import time
 
-from test_extract import FLIGHT_SUBJECT
+from test_audit import NO_FLIGHT
+from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT
 from test_run import BROKEN_SUBJECT, mailbox, run
+from test_thorough import NEWSLETTER, RECEIPT, configure, scripted
 
 STORE = "flighty_exporter.db"
 
@@ -97,6 +99,31 @@ def test_session_after_extract_review_and_export(workspace):
     assert f"  manual-add list: {root / 'manual-add.csv'}" in files
     assert re.search(r"  import file: .*openflights-backup-.*\.csv", files)
     assert "  4 generated files" in text
+
+
+def test_the_count_of_recorded_messages_says_skipped_labels_are_not_counted(workspace):
+    mbox = mailbox(workspace)
+    assert workspace.run("classify", "--mailbox", str(mbox)).returncode == 0
+
+    lines = session(workspace).splitlines()
+
+    recorded = next(i for i, line in enumerate(lines) if line.lstrip().startswith("messages recorded:"))
+    assert lines[recorded + 1] == "    (messages under Spam, Trash, Drafts and Chat are not counted)"
+
+
+def test_after_a_thorough_run_starting_fresh_tells_extraction_from_the_check_apart(workspace):
+    configure(workspace)
+    mbox = scripted(workspace, {
+        FLIGHT_SUBJECT: (0.97, FLIGHT_RECORD), NEWSLETTER: (0.01, NO_FLIGHT), RECEIPT: (0.002, NO_FLIGHT),
+    })
+    run(workspace, "--mailbox", str(mbox), "--thoroughness", "thorough")
+
+    text = session(workspace)
+
+    assert value(text, "extracted") == "1 of 1"
+    lose = text[text.index("Starting fresh would lose:"):].splitlines()
+    assert "  extraction of 1 email, and 2 more read by the check for missed flight emails" in lose
+    assert not any(line.startswith("  extraction of 3") for line in lose)
 
 
 def test_a_session_whose_every_candidate_is_extracted_is_complete(workspace):

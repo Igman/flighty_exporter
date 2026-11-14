@@ -49,6 +49,11 @@ STARTED_THRESHOLD = "started_with_threshold"  # JSON number
 STARTED_AT = "started_at"  # set only when this version created the store
 LAST_ACTIVE = "last_active"
 
+# Messages under these labels are skipped and never recorded.
+NOT_COUNTED = "messages under Spam, Trash, Drafts and Chat are not counted"
+
+CHECK_READ = "read by the check for missed flight emails"
+
 # What each written file is.
 REVIEW_TABLE = "review table"
 FAILURES_FILE = "failures file"
@@ -217,6 +222,9 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
         candidates = store.extraction_candidates(config.decision_model, threshold_used)
         extracted_ids = store.extracted_ids(config.extraction_model)
         extracted = len(set(candidates) & extracted_ids)
+        # Extracted, but below the threshold in use: sampled by the check for
+        # missed flight emails (the audit), the only pass that reads them.
+        below = len(extracted_ids - set(candidates))
         extraction_failed = sum(
             1 for mid in set(candidates) - extracted_ids if store.failure_reason(mid, EXTRACT_PASS) is not None
         )
@@ -253,18 +261,28 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
             complete=(classified + markup) > 0 and extracted == len(candidates),
             files=files,
             files_known=files_known,
-            would_lose=_would_lose(counts, len(files)),
+            would_lose=_would_lose(counts, len(files), extracted, below),
         )
 
 
-def _would_lose(counts: dict[str, int], files: int) -> tuple[str, ...]:
+def _would_lose(counts: dict[str, int], files: int, extracted: int, below: int) -> tuple[str, ...]:
+    """``extracted``: emails at or above the threshold in use extracted by the
+    configured model; ``below``: emails below it that model read (the check
+    for missed flight emails). Extractions by another model are the rest."""
     lines = []
     if counts["classifications"]:
         lines.append(f"classification of {_emails(counts['classifications'])}")
     if counts["markup"]:
         lines.append(f"flight data read from machine-readable data in {_emails(counts['markup'])}")
-    if counts["model_extractions"]:
-        lines.append(f"extraction of {_emails(counts['model_extractions'])}")
+    other_models = counts["model_extractions"] - extracted - below
+    if extracted and below:
+        lines.append(f"extraction of {_emails(extracted)}, and {below:,} more {CHECK_READ}")
+    elif extracted:
+        lines.append(f"extraction of {_emails(extracted)}")
+    elif below:
+        lines.append(f"{_emails(below)} {CHECK_READ}")
+    if other_models > 0:
+        lines.append(f"extraction of {_emails(other_models)} by another extraction model")
     if counts["review_decisions"]:
         lines.append(_plural(counts["review_decisions"], "review decision"))
     if files:
@@ -348,6 +366,7 @@ def format_description(description: SessionDescription) -> str:
         f"  last active:                {_time(d.last_active)}",
         "Progress:",
         f"  messages recorded:          {d.messages}",
+        f"    ({NOT_COUNTED})",
         f"  classified:                 {d.classified}",
         f"  resolved from machine-readable data: {d.resolved_from_markup}",
         f"  at or above the threshold:  {d.candidates}",
