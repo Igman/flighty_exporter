@@ -53,10 +53,10 @@ from pathlib import Path
 from typing import Any
 
 from .flights.passengers import names_someone
-from .output.openflights import DEFAULT_DATA_URL
 
 DEFAULT_CONFIG_NAME = "flighty_exporter.toml"
 DEFAULT_DATA_DIR = Path.home() / ".cache" / "flighty_exporter" / "openflights"
+DEFAULT_DATA_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
 
 
 class ConfigError(Exception):

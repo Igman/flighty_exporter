@@ -38,7 +38,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
-DEFAULT_DATA_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
+from ..config import DEFAULT_DATA_URL
+
 DATA_FILES = ("airports.dat", "airlines.dat")
 DOWNLOAD_TIMEOUT_SECONDS = 60
 
