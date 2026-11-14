@@ -257,6 +257,22 @@ def test_spreadsheet_resave_reads_the_same(workspace):
     assert result.count("rejected as invalid") == 0
 
 
+def test_a_typed_flight_number_and_airport_are_normalised_as_decide_normalises_them(workspace):
+    """The spreadsheet route and the application / ``decide`` route share one
+    rule: a flight number loses spaces, hyphens and dashes; an airport code
+    loses every space; both are upper-cased."""
+    configure(workspace)
+
+    for typed_number, typed_origin in (("zz-1234", "l is"), ("ZZ–1234", "LIS"), ("zz 1234", " lis ")):
+        for path in import_files(workspace.root):
+            path.unlink()
+        result = export(workspace, [row("2025-05-12", typed_number, typed_origin, "osl")])
+
+        assert result.returncode == 0, result.stderr
+        assert data_rows(the_import_file(workspace.root)) == [LIS_OSL], typed_number
+        assert read_csv(workspace.root / "manual-add.csv") == []
+
+
 def test_crlf_resave_with_byte_order_mark_reads_the_same(workspace):
     configure(workspace)
     write_review(workspace.root / "review.csv", [row("2025-05-12", "ZZ1234", "LIS", "OSL")],

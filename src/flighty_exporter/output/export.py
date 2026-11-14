@@ -56,9 +56,10 @@ from pathlib import Path
 
 from ..config import Config
 from ..flights.decisions import (
-    Corrections, InvalidCorrection, ReviewDecision, ReviewedFlight, keep_override, resolve_key,
+    Corrections, InvalidCorrection, ReviewDecision, ReviewedFlight, is_date, keep_override, resolve_key,
     typed_corrections,
 )
+from ..flights.validate import normalise_airport, normalise_flight_number
 from ..store import Store
 from ..tables import write_csv
 from . import openflights as import_format
@@ -79,8 +80,6 @@ FIRST_MATCHABLE_DATE = date(2006, 1, 1)
 # Field separators a spreadsheet may re-save the review table with; the first wins a tie.
 _DELIMITERS = (",", ";", "\t")
 
-_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_WHITESPACE = re.compile(r"\s+")
 
 
 class ExportError(Exception):
@@ -466,7 +465,8 @@ def _kept_rows(rows: list[ReviewRow], summary: ExportSummary) -> list[KeptRow]:
             continue
 
         reasons = []
-        raw_date, origin, destination = cell("date"), cell("origin").upper(), cell("destination").upper()
+        raw_date = cell("date")
+        origin, destination = normalise_airport(cell("origin")), normalise_airport(cell("destination"))
         flight_date = _parse_date(raw_date)
         if flight_date is None:
             reasons.append(f"date {raw_date!r} is not a real YYYY-MM-DD date")
@@ -478,7 +478,7 @@ def _kept_rows(rows: list[ReviewRow], summary: ExportSummary) -> list[KeptRow]:
             summary.invalid.append((row_number, "; ".join(reasons)))
             continue
         assert flight_date is not None
-        flight_number = _WHITESPACE.sub("", cell("flight_number")).upper()
+        flight_number = normalise_flight_number(cell("flight_number"))
         kept.append(
             KeptRow(
                 row_number,
@@ -511,12 +511,7 @@ def _delimiter(text: str) -> str:
 
 
 def _parse_date(value: str) -> date | None:
-    if not _DATE.fullmatch(value):
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
+    return date.fromisoformat(value) if is_date(value) else None
 
 
 def format_summary(summary: ExportSummary) -> str:

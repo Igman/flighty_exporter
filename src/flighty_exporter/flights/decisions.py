@@ -30,12 +30,15 @@ when it equals the pre-set keep (so no override is saved).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import date
 
 from .consolidate import Flight
 from .records import Segment
 from .validate import CodeLookup, check_flights, normalise_airport, normalise_flight_number
+
+_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 @dataclass(frozen=True)
@@ -81,8 +84,9 @@ def segment_key(segment: Segment) -> str:
 
 
 def is_date(value: str) -> bool:
-    """A real ``YYYY-MM-DD`` date, the only date a correction may hold."""
-    if len(value) != 10:
+    """A real ``YYYY-MM-DD`` date, the only date a correction may hold (and
+    the only date the spreadsheet route accepts)."""
+    if not _DATE.fullmatch(value):
         return False
     try:
         date.fromisoformat(value)

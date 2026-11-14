@@ -156,6 +156,8 @@ def test_a_value_typed_back_to_the_original_clears_that_correction(workspace):
 @pytest.mark.parametrize("value, message", [
     ("date=2025-02-30", "not a real YYYY-MM-DD date"),
     ("date=12/05/2025", "not a real YYYY-MM-DD date"),
+    # Refused by the spreadsheet route too: the two routes accept the same dates.
+    ("date=2025-W20-1", "not a real YYYY-MM-DD date"),
     ("origin=", "origin is empty"),
     ("destination=  ", "destination is empty"),
 ])
