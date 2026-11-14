@@ -1,7 +1,8 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
-``extract``, ``review``, ``audit`` and ``export``.
+``extract``, ``review``, ``audit`` and ``export``. ``mark-added`` ticks a
+flight on the manual-add list in the store.
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .flights.decisions import is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
@@ -211,10 +213,32 @@ def cmd_review(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_export(args: argparse.Namespace, config: Config) -> int:
+    """Three cases: a review table given or present is exported, after its
+    keep values and corrections are recorded as decisions in the store (if
+    there is one); with no review table, or with --from-store, the store's
+    flight list is exported with the saved decisions applied."""
     review_path = Path(args.review).expanduser() if args.review else config.review_output
     output_dir = Path(args.output_dir).expanduser() if args.output_dir else config.export_output_dir
+    store_path = _store_path(args, config)
+    if args.from_store and args.review:
+        raise UsageError("--from-store exports from the store and ignores the review table; do not pass --review too")
+    from_store = args.from_store or (not args.review and not review_path.exists() and store_path.is_file())
+    if from_store and not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
     try:
-        summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)
+        if from_store:
+            with Store(store_path) as store:
+                summary = export.run_store_export(
+                    config, store, output_dir, config.export_data_dir, config.export_data_url
+                )
+        elif store_path.is_file():
+            with Store(store_path) as store:
+                summary = export.run_export(
+                    review_path, output_dir, config.export_data_dir, config.export_data_url, store=store, config=config
+                )
+        else:
+            summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)
     except (export.ExportError, ReferenceDataError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
@@ -302,12 +326,57 @@ def _export_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--output-dir", help="directory for the import file and manual-add list (overrides [export] output_dir)"
     )
+    parser.add_argument(
+        "--store", help="SQLite store file to record decisions in or export from (overrides `store` in config)"
+    )
+    parser.add_argument(
+        "--from-store",
+        action="store_true",
+        help="export the store's flight list with the saved review decisions, even if a review table exists",
+    )
 
 
 COMMANDS["export"] = (
     "turn the kept rows of the edited review table into an import file for Flighty and a manual-add list",
     _export_arguments,
     cmd_export,
+)
+
+
+def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
+    if not is_date(args.date):
+        raise UsageError(f"date {args.date!r} is not a real YYYY-MM-DD date")
+    if bool(args.flight_number) == bool(args.route):
+        raise UsageError("give the flight number, or --route ORIGIN DEST for a flight without one (not both)")
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    origin, destination = args.route or ("", "")
+    with Store(store_path) as store:
+        key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
+        store.set_added(key, not args.undo)
+    if args.undo:
+        print(f"Flight {key} is no longer marked as added in Flighty.")
+    else:
+        print(f"Flight {key} is marked as added in Flighty; export shows it as done on the manual-add list.")
+    return EXIT_OK
+
+
+def _mark_added_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("date", help="the flight's date, YYYY-MM-DD, as on the manual-add list")
+    parser.add_argument("flight_number", nargs="?", help="the flight number, as on the manual-add list")
+    parser.add_argument(
+        "--route", nargs=2, metavar=("ORIGIN", "DEST"), help="origin and destination, for a flight without a number"
+    )
+    parser.add_argument("--undo", action="store_true", help="remove the tick instead of setting it")
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+
+
+COMMANDS["mark-added"] = (
+    "tick a flight on the manual-add list as entered in Flighty by hand (or untick it with --undo)",
+    _mark_added_arguments,
+    cmd_mark_added,
 )
 
 

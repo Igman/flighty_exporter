@@ -21,6 +21,19 @@ Each data row is one of:
 - exported: written to the import file.
 
 Row numbers are spreadsheet row numbers: the header is row 1.
+
+Two sources (the command line picks one, see ``cli.cmd_export``):
+
+- ``run_export``: the review CSV, as above. Given the store, the CSV's keep
+  values and corrections are first recorded there as decisions, matched by
+  the flight_id column (``record_decisions``); rows without one record
+  nothing. With no store the CSV is exported exactly as before.
+- ``run_store_export``: the store's flight list with the saved decisions
+  applied (``review.build_flight_list``), turned into the rows the review
+  table would hold and read the same way, so both give the same files.
+
+The manual-add list's last column, done, shows the store's manual-add tick
+for the flight (set by ``mark-added``).
 """
 
 from __future__ import annotations
@@ -32,12 +45,17 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from ..config import Config
+from ..flights.decisions import ReviewDecision, ReviewedFlight, is_date, resolve_key
+from ..flights.validate import normalise_airport, normalise_flight_number
+from ..store import Store
 from ..tables import write_csv
 from . import openflights as import_format
+from .review import DECISIONS_DISCARDED, build_flight_list, discard_stale_decisions
 
 MANUAL_ADD_NAME = "manual-add.csv"
 MANUAL_ADD_COLUMNS = (
-    "date", "origin", "destination", "flight_number", "reason", "message_date", "message_subject",
+    "date", "origin", "destination", "flight_number", "reason", "message_date", "message_subject", "done",
 )
 REQUIRED_COLUMNS = ("keep", "date", "flight_number", "origin", "destination")
 
@@ -58,12 +76,18 @@ class ExportError(Exception):
     pass
 
 
+# A data row of the review table: its spreadsheet row number and its cells by
+# column name (lowercased, values stripped).
+ReviewRow = tuple[int, dict[str, str]]
+
+
 @dataclass
 class KeptRow:
     row_number: int
     flight: import_format.Flight
     message_date: str
     message_subject: str
+    flight_id: str = ""
 
 
 @dataclass
@@ -76,6 +100,10 @@ class ExportSummary:
     import_path: Path | None = None
     manual_add: int = 0
     manual_add_path: Path | None = None
+    store_path: Path | None = None  # the store decisions were read from or recorded in, None if none
+    from_store: bool = False  # exported from the store's flight list, not from the review table
+    decisions_recorded: int = 0
+    decisions_discarded: int = 0
 
 
 def run_export(
@@ -84,9 +112,118 @@ def run_export(
     data_dir: Path,
     data_url: str,
     now: datetime | None = None,
+    store: Store | None = None,
+    config: Config | None = None,
 ) -> ExportSummary:
+    """Export from the review table at ``review_path``. With a ``store`` (and
+    its ``config``), the table's keep values and corrections are first
+    recorded there as decisions (see ``record_decisions``), and the
+    manual-add list shows the store's ticks."""
     summary = ExportSummary(review_path)
-    kept = _read_review(review_path, summary)
+    rows = read_review(review_path)
+    decisions: dict[str, ReviewDecision] = {}
+    if store is not None and config is not None:
+        summary.store_path = store.path
+        summary.decisions_recorded, summary.decisions_discarded = record_decisions(config, store, rows)
+        decisions = store.review_decisions()
+    return _export(_kept_rows(rows, summary), summary, output_dir, data_dir, data_url, now, decisions)
+
+
+def run_store_export(
+    config: Config,
+    store: Store,
+    output_dir: Path,
+    data_dir: Path,
+    data_url: str,
+    now: datetime | None = None,
+) -> ExportSummary:
+    """Export from the store's flight list with the saved decisions applied:
+    the rows the review table would hold, read the same way."""
+    flight_list = build_flight_list(config, store)
+    summary = ExportSummary(config.review_output, store_path=store.path, from_store=True)
+    summary.decisions_discarded = discard_stale_decisions(store, flight_list)
+    rows = [(number, _cells(reviewed)) for number, reviewed in enumerate(flight_list.flights, 2)]
+    kept = _kept_rows(rows, summary)
+    return _export(kept, summary, output_dir, data_dir, data_url, now, store.review_decisions())
+
+
+def record_decisions(config: Config, store: Store, rows: list[ReviewRow]) -> tuple[int, int]:
+    """Record the review table's keep values and corrections as decisions,
+    for each row whose ``flight_id`` names a flight of the store's list: a
+    correction for each of date, flight number, origin and destination that
+    differs from the flight as consolidation produced it, then a keep
+    override where the row's keep differs from the corrected flight's pre-set
+    keep. A row's values replace any decision recorded before. Rows with no
+    known flight_id, an unrecognised keep value, an invalid date or an empty
+    airport record nothing. Returns (flights whose decision changed,
+    decisions discarded because their flight is no longer produced)."""
+    before = store.review_decisions()
+    flights = {reviewed.key: reviewed for reviewed in build_flight_list(config, store).flights}
+    wanted: dict[str, tuple[bool, str, str, str, str]] = {}
+    for _, cells in rows:
+        key = cells.get("flight_id", "")
+        keep = _keep_value(cells.get("keep", ""))
+        day, origin, destination = cells.get("date", ""), cells.get("origin", ""), cells.get("destination", "")
+        if key not in flights or keep is None or not is_date(day) or not origin or not destination:
+            continue
+        wanted[key] = (keep, day, normalise_flight_number(cells.get("flight_number", "")),
+                       normalise_airport(origin), normalise_airport(destination))
+    for key, (_, day, number, origin, destination) in wanted.items():
+        original = flights[key].original
+        store.save_corrections(
+            key,
+            date=day if day != original.date else None,
+            flight_number=number if number != original.flight_number else None,
+            origin=origin if origin != original.origin else None,
+            destination=destination if destination != original.destination else None,
+        )
+    flight_list = build_flight_list(config, store)
+    corrected = {reviewed.key: reviewed for reviewed in flight_list.flights}
+    for key, (keep, *_) in wanted.items():
+        store.save_keep(key, keep if keep != corrected[key].preset_keep else None)
+    after = store.review_decisions()
+    recorded = sum(1 for key in wanted if _choices(before.get(key)) != _choices(after.get(key)))
+    return recorded, discard_stale_decisions(store, flight_list)
+
+
+def _choices(decision: ReviewDecision | None) -> tuple[object, ...]:
+    if decision is None:
+        return (None,) * 5
+    return (decision.keep, decision.date, decision.flight_number, decision.origin, decision.destination)
+
+
+def _keep_value(value: str) -> bool | None:
+    if value.lower() in KEEP_YES:
+        return True
+    if value.lower() in KEEP_NO:
+        return False
+    return None
+
+
+def _cells(reviewed: ReviewedFlight) -> dict[str, str]:
+    """A flight of the store's list as the review table's row would hold it."""
+    segment, latest = reviewed.flight.segment, reviewed.flight.latest
+    return {
+        "keep": "yes" if reviewed.keep else "no",
+        "date": segment.date,
+        "flight_number": segment.flight_number,
+        "origin": segment.origin,
+        "destination": segment.destination,
+        "message_date": latest.message_date,
+        "message_subject": latest.subject,
+        "flight_id": reviewed.key,
+    }
+
+
+def _export(
+    kept: list[KeptRow],
+    summary: ExportSummary,
+    output_dir: Path,
+    data_dir: Path,
+    data_url: str,
+    now: datetime | None,
+    decisions: dict[str, ReviewDecision],
+) -> ExportSummary:
 
     manual: list[tuple[KeptRow, str]] = []
     candidates: list[KeptRow] = []
@@ -129,6 +266,7 @@ def run_export(
                 "reason": reason,
                 "message_date": row.message_date,
                 "message_subject": row.message_subject,
+                "done": "yes" if _ticked(row, decisions) else "",
             }
             for row, reason in manual
         ],
@@ -137,7 +275,18 @@ def run_export(
     return summary
 
 
-def _read_review(path: Path, summary: ExportSummary) -> list[KeptRow]:
+def _ticked(row: KeptRow, decisions: dict[str, ReviewDecision]) -> bool:
+    """Whether the user has ticked this manual-add flight (``mark-added``)."""
+    flight = row.flight
+    key = row.flight_id or resolve_key(
+        decisions, flight.date.isoformat(), flight.flight_number, flight.origin, flight.destination
+    )
+    decision = decisions.get(key)
+    return decision is not None and decision.added
+
+
+def read_review(path: Path) -> list[ReviewRow]:
+    """The non-blank data rows of the review table at ``path``."""
     if not path.is_file():
         raise ExportError(f"review table not found: {path}. Run review first, or pass --review PATH.")
     try:
@@ -166,15 +315,24 @@ def _read_review(path: Path, summary: ExportSummary) -> list[KeptRow]:
             "freshly written review table."
         )
 
-    kept: list[KeptRow] = []
+    rows: list[ReviewRow] = []
     for row_number, record in enumerate(records[1:], 2):
         if not any(cell.strip() for cell in record):
             continue
+        rows.append((row_number, {
+            name: record[position].strip() if position < len(record) else "" for name, position in index.items()
+        }))
+    return rows
+
+
+def _kept_rows(rows: list[ReviewRow], summary: ExportSummary) -> list[KeptRow]:
+    """The kept, valid rows; the others are counted in ``summary``."""
+    kept: list[KeptRow] = []
+    for row_number, cells in rows:
         summary.rows += 1
 
         def cell(name: str) -> str:
-            position = index.get(name)
-            return record[position].strip() if position is not None and position < len(record) else ""
+            return cells.get(name, "")
 
         keep = cell("keep")
         if keep.lower() in KEEP_NO:
@@ -204,6 +362,7 @@ def _read_review(path: Path, summary: ExportSummary) -> list[KeptRow]:
                 import_format.Flight(flight_date, origin, destination, flight_number),
                 cell("message_date"),
                 cell("message_subject"),
+                cell("flight_id"),
             )
         )
     return kept
@@ -246,12 +405,21 @@ def format_summary(summary: ExportSummary) -> str:
     lines.append(f"  flights exported:           {summary.exported}")
     lines.append(f"Manual-add list written to {summary.manual_add_path}")
     lines.append(f"  flights to add by hand:     {summary.manual_add}")
-    lines.append(f"Review table read from {summary.review_path}")
+    if summary.from_store:
+        lines.append(f"Flight list read from the store {summary.store_path}")
+        lines.append("  source of the export:       store (saved review decisions applied)")
+    else:
+        lines.append(f"Review table read from {summary.review_path}")
+        lines.append("  source of the export:       review table")
     lines.append(f"  rows:                       {summary.rows}")
     lines.append(f"  not kept:                   {summary.not_kept}")
     lines.append(f"  rejected as invalid:        {len(summary.invalid)}")
     for row_number, reason in summary.invalid:
         lines.append(f"    row {row_number}: {reason}")
+    if summary.store_path is not None:
+        if not summary.from_store:
+            lines.append(f"  decisions recorded from the review table: {summary.decisions_recorded}")
+        lines.append(f"  {DECISIONS_DISCARDED}: {summary.decisions_discarded}")
     if summary.invalid:
         lines.append("Fix the rejected rows in the review table and run export again.")
     return "\n".join(lines)

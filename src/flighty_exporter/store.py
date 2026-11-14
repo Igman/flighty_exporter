@@ -23,6 +23,11 @@ Tables (extended by later passes):
 - ``failures``: the latest failure per message and pass.
 - ``review_tables``: a hash of each review table as review last wrote it, so
   that an edited table is not overwritten.
+- ``review_decisions``: the user's review decisions per flight (see
+  ``flights.decisions``), keyed by the flight's identity: a keep override
+  (1/0, NULL for none), corrections to date, flight number, origin and
+  destination (NULL for none), and the manual-add tick (``added``). A row
+  with nothing left in it is deleted.
 """
 
 from __future__ import annotations
@@ -35,9 +40,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .flights.decisions import ReviewDecision
 from .flights.records import MARKUP_SOURCE, Decision, Extraction, ExtractionRecord
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # The passes that record failures, as named in the ``failures`` table.
 CLASSIFY_PASS = "classify"
@@ -87,6 +93,16 @@ CREATE TABLE IF NOT EXISTS review_tables (
     path TEXT PRIMARY KEY,
     sha256 TEXT NOT NULL,
     written_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review_decisions (
+    flight_key TEXT PRIMARY KEY,
+    keep INTEGER,
+    date TEXT,
+    flight_number TEXT,
+    origin TEXT,
+    destination TEXT,
+    added INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
 );
 """
 
@@ -315,6 +331,70 @@ class Store:
             "SELECT sha256 FROM review_tables WHERE path = ?", (str(path.resolve()),)
         ).fetchone()
         return row[0] if row else None
+
+    # -- review decisions -------------------------------------------------------
+    # A store from before decisions existed gets the empty table from the
+    # schema script (CREATE TABLE IF NOT EXISTS); nothing else changes.
+
+    def review_decisions(self) -> dict[str, ReviewDecision]:
+        """Every saved review decision, by flight key."""
+        rows = self._db.execute(
+            "SELECT flight_key, keep, date, flight_number, origin, destination, added FROM review_decisions"
+        )
+        return {
+            key: ReviewDecision(None if keep is None else bool(keep), day, number, origin, destination, bool(added))
+            for key, keep, day, number, origin, destination, added in rows
+        }
+
+    def save_keep(self, flight_key: str, keep: bool | None) -> None:
+        """Save (or with None, remove) the keep override for a flight."""
+        self._update_decision(flight_key, keep=None if keep is None else int(keep))
+
+    def save_corrections(
+        self,
+        flight_key: str,
+        date: str | None = None,
+        flight_number: str | None = None,
+        origin: str | None = None,
+        destination: str | None = None,
+    ) -> None:
+        """Replace the flight's corrections (None: that field is not corrected)."""
+        self._update_decision(
+            flight_key, date=date, flight_number=flight_number, origin=origin, destination=destination
+        )
+
+    def set_added(self, flight_key: str, added: bool) -> None:
+        """Tick (or untick) the flight on the manual-add list."""
+        self._update_decision(flight_key, added=int(added))
+
+    def clear_decision(self, flight_key: str) -> None:
+        """Remove the flight's keep override and corrections; its manual-add
+        tick stays."""
+        self._update_decision(flight_key, keep=None, date=None, flight_number=None, origin=None, destination=None)
+
+    def delete_decisions(self, flight_keys: set[str] | list[str]) -> int:
+        """Delete the decisions of these flights entirely; the number deleted."""
+        with self._write():
+            deleted = 0
+            for key in sorted(flight_keys):
+                deleted += self._db.execute("DELETE FROM review_decisions WHERE flight_key = ?", (key,)).rowcount
+        return deleted
+
+    def _update_decision(self, flight_key: str, **values: object) -> None:
+        columns = ", ".join(values)
+        with self._write():
+            self._db.execute(
+                f"INSERT INTO review_decisions (flight_key, {columns}, updated_at) "
+                f"VALUES (?, {', '.join('?' for _ in values)}, ?) "
+                f"ON CONFLICT(flight_key) DO UPDATE SET "
+                f"{', '.join(f'{c}=excluded.{c}' for c in values)}, updated_at=excluded.updated_at",
+                (flight_key, *values.values(), _now()),
+            )
+            self._db.execute(
+                "DELETE FROM review_decisions WHERE flight_key = ? AND keep IS NULL AND date IS NULL "
+                "AND flight_number IS NULL AND origin IS NULL AND destination IS NULL AND NOT added",
+                (flight_key,),
+            )
 
     # -- failures ---------------------------------------------------------------
 

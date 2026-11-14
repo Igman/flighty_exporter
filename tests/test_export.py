@@ -26,7 +26,7 @@ HEADER = (
     "Plane,Registration,Trip,Note,From_OID,To_OID,Airline_OID,Plane_OID"
 )
 MANUAL_ADD_COLUMNS = [
-    "date", "origin", "destination", "flight_number", "reason", "message_date", "message_subject",
+    "date", "origin", "destination", "flight_number", "reason", "message_date", "message_subject", "done",
 ]
 REVIEW_COLUMNS = [
     "keep", "needs_attention", "attention_reason", "date", "flight_number", "airline", "origin", "destination", "booking_reference", "passengers",

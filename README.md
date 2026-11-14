@@ -66,7 +66,7 @@ private and never commit them:
 | File | Written by | Default name |
 | --- | --- | --- |
 | Your config (paths, name variants) | you | `flighty_exporter.toml` |
-| The store: every pass's results (SQLite) | `classify`, `extract`, `audit` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
+| The store: every pass's results and your review decisions (SQLite) | `classify`, `extract`, `audit`, `export`, `mark-added` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
 | The review table | `review` | `review.csv` |
 | The failures file | `review` | `failures.csv` |
 | The audit table | `audit` | `audit.csv` |
@@ -353,6 +353,18 @@ The review table's columns:
 | `source_count` | How many emails mention the flight. |
 | `message_id`, `message_date`, `message_subject` | The most recent of those emails, so you can find it in Gmail. |
 | `source_messages` | Every one of those emails, as `YYYY-MM-DD subject`, joined with ` \| `. |
+| `flight_id` | The flight's identity as the tool first found it: date and flight number (`2025-05-12 ZZ1234`), or date and route when there is no flight number (`2025-08-01 OSL-LIS`). It does not change when you correct the row, so export can match your edits to the flight even if you re-sort the rows. Leave it as it is. |
+
+**Your decisions are saved in the store.** When `export` reads an edited
+table, it records your keep choices and corrections in the store (see
+[export](#6-export)). The next `review` writes the table from the flights with
+those decisions applied: corrected values, your keep choice, and attention
+reasons recomputed from the corrected values (a correction to an unknown
+airport is flagged like any other). Your keep choice wins over the pre-set
+one. A decision follows the latest result: if a later run no longer produces
+a flight (say a cancellation email was found), its decision is discarded, and
+the summary line `decisions discarded because their flight is no longer
+produced` counts them.
 
 There are two kinds of attention reason.
 
@@ -424,14 +436,14 @@ rows at the end. Save as CSV in UTF-8
 uv run flighty-exporter export
 ```
 
-Reads the edited review table and writes, in the config file's directory
+Reads the edited review table (or the store, see below) and writes, in the config file's directory
 (or `--output-dir DIR`):
 
 - **The import file**, `openflights-backup-YYYY-MM-DD-HHMM.csv` (the time is
   UTC): every kept row Flighty can match, in OpenFlights' backup format.
 - **The manual-add list**, `manual-add.csv`: kept rows that cannot go in the
   import file, with `date`, `origin`, `destination`, `flight_number`,
-  `reason`, `message_date` and `message_subject`. The reason is one or more
+  `reason`, `message_date`, `message_subject` and `done` (see below). The reason is one or more
   of:
   - `no flight number`
   - `dated before 2006` (Flighty has no records before 2006)
@@ -445,6 +457,36 @@ number (the header is row 1) and reason for each: a `keep` value that is not
 yes or no, a date that is not a real `YYYY-MM-DD` date, or an empty origin or
 destination. Rejected rows are left out of both files; fix them and run
 `export` again. It takes a second.
+
+Where `export` reads the flights from, in this order:
+
+1. **A review table**, given with `--review FILE` or present at the configured
+   path (`review.csv`): read as described above. If the store exists (or
+   `--store FILE`), each row's `keep`, `date`, `flight_number`, `origin` and
+   `destination` are first recorded in it as decisions, matched by
+   `flight_id`, but only where they differ from what the tool produced; the
+   summary counts them (`decisions recorded from the review table`). Rows
+   without a `flight_id` (a table from an older version, or one you made by
+   hand) are exported but record nothing, and with no store the table is
+   simply exported.
+2. **The store**, when there is no review table: the flights with your saved
+   decisions applied, the same rows `review` would write. This gives the same
+   import file as exporting the table `review` would write.
+3. **`--from-store`** forces the store even when a review table exists.
+
+The summary's `source of the export` line says which was used.
+
+The manual-add list has a last column, `done`: `yes` for a flight you have
+marked as entered in Flighty by hand, so you can work through the list over
+several sittings. Mark one with its date and flight number as the list shows
+them, or `--route ORIGIN DEST` for a flight without a number; `--undo` removes
+the mark. Run `export` again to see it in the list.
+
+```
+uv run flighty-exporter mark-added 2004-08-01 ZZ9
+uv run flighty-exporter mark-added 2025-08-01 --route OSL LIS
+uv run flighty-exporter mark-added 2004-08-01 ZZ9 --undo
+```
 
 ## Importing into Flighty
 
@@ -679,7 +721,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 |---|---|
 | `mail/` | Turning an mbox into readable messages: `reader` (MIME), `html_text`, `pdf_text`, and `markup` (machine-readable flight data). The only place that knows about MIME, HTML, PDFs or calendar files. |
 | `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, and `connection` (the shared HTTP opener and the errors that stop a pass). |
-| `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`. |
+| `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
 | `output/` | What the user gets at the end: `review`, `export`, and `openflights` (the import file format and reference data). |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |

@@ -22,6 +22,14 @@ loaded, the table is still written without the code checks and the summary
 says why. The printed summary also lists the bookings dropped as being for
 other passengers, so the user can check them without the table.
 
+The saved review decisions (see ``flights.decisions``) are applied on top:
+corrections before the checks, so reasons and pre-set keep are recomputed
+from the corrected values, and a keep override after them. ``build_flight_list``
+builds this flight list for review, export and the terminal application. The
+last column, flight_id, names the flight as consolidation produced it, so an
+edited row can be matched to its flight. Writing the table discards the
+decisions whose flight is no longer produced and counts them in the summary.
+
 The failures file lists selected messages with no valid extraction, and PDF
 attachments of selected messages that the extract pass could not read
 (image-only, too large or unreadable) with the message they came from.
@@ -41,9 +49,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import Config
-from ..flights.consolidate import BOOKED_ONLY, CONFIRMED, NO_PASSENGER_NAMED, DroppedBooking, Flight, SourceRecord, consolidate
+from ..flights.consolidate import (
+    BOOKED_ONLY, CONFIRMED, NO_PASSENGER_NAMED, Consolidation, DroppedBooking, Flight, SourceRecord,
+    consolidate,
+)
+from ..flights.decisions import ReviewedFlight, apply_decisions
 from ..flights.records import MARKUP_SOURCE
-from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, check_flights, normalise_record, reason_kind
+from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, normalise_record, reason_kind
 from ..store import EXTRACT_PASS, Store
 from ..tables import format_message_date, write_csv
 from .openflights import OpenFlights, ReferenceDataError
@@ -68,6 +80,7 @@ REVIEW_COLUMNS = (
     "message_date",
     "message_subject",
     "source_messages",
+    "flight_id",
 )
 
 FAILURE_COLUMNS = ("message_id", "message_date", "sender", "subject", "reason")
@@ -82,6 +95,8 @@ CODES_NOT_CHECKED = (
     "airport and airline codes were not checked, so no row is flagged for an unknown code. "
     "The reference data could not be loaded:"
 )
+
+DECISIONS_DISCARDED = "decisions discarded because their flight is no longer produced"
 
 # How many dropped bookings the printed summary lists before "and N more".
 DROPPED_LISTED = 20
@@ -113,6 +128,20 @@ class ReviewSummary:
     # Why the codes were not checked, None if they were (or there was nothing to check).
     codes_not_checked: str | None = None
     dropped_bookings: list[DroppedBooking] = field(default_factory=list)
+    decisions_discarded: int = 0
+
+
+@dataclass
+class FlightList:
+    """The flights for review and export, with what consolidation left beside them."""
+
+    flights: list[ReviewedFlight]  # decisions applied; in review table order
+    consolidation: Consolidation
+    sources: list[SourceRecord]
+    failures: list[dict[str, str]]  # rows of the failures file
+    unread_attachments: int
+    codes_not_checked: str | None  # why the codes were not checked, None if they were
+    stale_decisions: set[str]  # keys of saved decisions that name no flight
 
 
 def write_review(config: Config, store: Store, review_path: Path, failures_path: Path, force: bool) -> ReviewSummary:
@@ -124,6 +153,53 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
                 "review with this store). Overwriting it would lose your edits; pass --force to overwrite "
                 "it anyway, or --output to write elsewhere."
             )
+    built = build_flight_list(config, store)
+    discarded = discard_stale_decisions(store, built)
+    result, sources, failures = built.consolidation, built.sources, built.failures
+    unread_attachments, codes_not_checked = built.unread_attachments, built.codes_not_checked
+    rows = [_row(reviewed) for reviewed in built.flights]
+    flights = [reviewed.flight for reviewed in built.flights]
+
+    reasons: Counter[str] = Counter()
+    unknown_codes: dict[str, set[str]] = {}
+    for flight in flights:
+        reasons.update({reason_kind(reason) for reason in flight.attention})
+        for reason in flight.attention:
+            kind = reason_kind(reason)
+            if kind in (UNKNOWN_AIRPORT, UNKNOWN_AIRLINE):
+                unknown_codes.setdefault(kind, set()).add(reason[len(kind) + 1:])
+
+    write_csv(review_path, REVIEW_COLUMNS, rows)
+    store.record_review_table(review_path, file_hash(review_path))
+    write_csv(failures_path, FAILURE_COLUMNS, failures)
+    return ReviewSummary(
+        review_path,
+        failures_path,
+        flights=len(rows),
+        confirmed=sum(1 for f in flights if f.evidence == CONFIRMED),
+        booked_only=sum(1 for f in flights if f.evidence == BOOKED_ONLY),
+        bookings_cancelled=result.bookings_cancelled,
+        bookings_replaced=result.bookings_replaced,
+        messages=len(sources),
+        messages_without_segments=sum(1 for s in sources if not s.record.segments),
+        failures=len(failures) - unread_attachments,
+        unread_attachments=unread_attachments,
+        passenger_filtering=bool(config.passenger_names),
+        needs_attention=sum(1 for f in flights if f.attention),
+        not_kept=sum(1 for f in flights if f.blocked),
+        reasons=reasons,
+        unknown_codes={kind: sorted(codes) for kind, codes in unknown_codes.items()},
+        codes_not_checked=codes_not_checked,
+        dropped_bookings=result.dropped_bookings,
+        decisions_discarded=discarded,
+    )
+
+
+def build_flight_list(config: Config, store: Store) -> FlightList:
+    """The flight list from the store: consolidation, then the saved
+    decisions' corrections, then the checks, then their keep overrides (see
+    ``flights.decisions``). Reads only; ``discard_stale_decisions`` removes
+    the decisions it found no flight for."""
     selected = store.extraction_candidates(config.decision_model, config.threshold)
     records = store.extraction_records(config.extraction_model)
     markup_records = store.extraction_records(MARKUP_SOURCE)
@@ -163,47 +239,22 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
             reference = OpenFlights.load(config.export_data_dir, config.export_data_url)
         except ReferenceDataError as exc:
             codes_not_checked = str(exc)
-    flights = check_flights(result.flights, reference, config.review_min_confidence)
-    rows = [_row(flight) for flight in flights]
-
-    reasons: Counter[str] = Counter()
-    unknown_codes: dict[str, set[str]] = {}
-    for flight in flights:
-        reasons.update({reason_kind(reason) for reason in flight.attention})
-        for reason in flight.attention:
-            kind = reason_kind(reason)
-            if kind in (UNKNOWN_AIRPORT, UNKNOWN_AIRLINE):
-                unknown_codes.setdefault(kind, set()).add(reason[len(kind) + 1:])
-
-    write_csv(review_path, REVIEW_COLUMNS, rows)
-    store.record_review_table(review_path, file_hash(review_path))
-    write_csv(failures_path, FAILURE_COLUMNS, failures)
-    return ReviewSummary(
-        review_path,
-        failures_path,
-        flights=len(rows),
-        confirmed=sum(1 for f in flights if f.evidence == CONFIRMED),
-        booked_only=sum(1 for f in flights if f.evidence == BOOKED_ONLY),
-        bookings_cancelled=result.bookings_cancelled,
-        bookings_replaced=result.bookings_replaced,
-        messages=len(sources),
-        messages_without_segments=sum(1 for s in sources if not s.record.segments),
-        failures=len(failures) - unread_attachments,
-        unread_attachments=unread_attachments,
-        passenger_filtering=bool(config.passenger_names),
-        needs_attention=sum(1 for f in flights if f.attention),
-        not_kept=sum(1 for f in flights if f.blocked),
-        reasons=reasons,
-        unknown_codes={kind: sorted(codes) for kind, codes in unknown_codes.items()},
-        codes_not_checked=codes_not_checked,
-        dropped_bookings=result.dropped_bookings,
+    flights, stale = apply_decisions(
+        result.flights, store.review_decisions(), reference, config.review_min_confidence
     )
+    return FlightList(flights, result, sources, failures, unread_attachments, codes_not_checked, stale)
 
 
-def _row(flight: Flight) -> dict[str, str]:
+def discard_stale_decisions(store: Store, flight_list: FlightList) -> int:
+    """Delete the saved decisions whose flight is no longer produced; how many."""
+    return store.delete_decisions(flight_list.stale_decisions) if flight_list.stale_decisions else 0
+
+
+def _row(reviewed: ReviewedFlight) -> dict[str, str]:
+    flight = reviewed.flight
     segment, latest = flight.segment, flight.latest
     return {
-        "keep": "no" if flight.blocked else "yes",
+        "keep": "yes" if reviewed.keep else "no",
         "needs_attention": "yes" if flight.attention else "",
         "attention_reason": "; ".join(flight.attention),
         "date": segment.date,
@@ -222,6 +273,7 @@ def _row(flight: Flight) -> dict[str, str]:
         "message_date": latest.message_date,
         "message_subject": latest.subject,
         "source_messages": " | ".join(f"{s.message_date[:10]} {s.subject}" for s in flight.sources),
+        "flight_id": reviewed.key,
     }
 
 
@@ -260,6 +312,7 @@ def format_summary(summary: ReviewSummary) -> str:
     lines += [
         f"  messages extracted:         {summary.messages}",
         f"  messages with no segments:  {summary.messages_without_segments}",
+        f"  {DECISIONS_DISCARDED}: {summary.decisions_discarded}",
         f"Failures file written to {summary.failures_path}",
         f"  failures:                   {summary.failures}",
         f"  PDF attachments not read:   {summary.unread_attachments}",
