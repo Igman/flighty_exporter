@@ -62,6 +62,7 @@ from .events import (
 )
 from .models import DECISION_SETTING, EXTRACTION_SETTING, address_warning, decision_client, extraction_client, pass_store
 from .report import REVIEW_TABLE_LEFT, RunReport
+from . import session
 
 QUICK_STAGES = (CLASSIFY, EXTRACT, REVIEW)
 THOROUGH_NOT_AVAILABLE = "thorough mode is not available yet"
@@ -126,6 +127,7 @@ def run_pipeline(
         config, mailbox_path, store_path, subscriber or (lambda event: None), should_stop or (lambda: False),
         progress_stream, command,
     )
+    run.thoroughness = thoroughness
     run.emit(RunStarted(QUICK_STAGES, thoroughness, mailbox_path, store_path))
     try:
         run.check_address(allow_remote)
@@ -134,7 +136,7 @@ def run_pipeline(
         review, left = run.review(review_path or config.review_output, failures_path or config.failures_output, force)
     except _Halt as halt:
         return halt.result
-    report = RunReport(thoroughness, classify, extract, review, review_table_left=left)
+    report = RunReport(thoroughness, classify, extract, review, review_table_left=left, files=tuple(run.files_written))
     run.emit(RunFinished(report))
     return RunResult(FINISHED, report=report)
 
@@ -158,6 +160,8 @@ class _Run:
         self.progress_stream = progress_stream
         self.command = command
         self.model_requests = 0  # sent by the current stage
+        self.thoroughness = config.thoroughness
+        self.files_written: list[tuple[str, Path]] = []  # (what, where), as recorded in the session
 
     def check_address(self, allow_remote: bool) -> None:
         try:
@@ -170,6 +174,7 @@ class _Run:
     def classify(self) -> ClassifySummary:
         client = decision_client(self.config)
         with self._model_stage(CLASSIFY, client, DECISION_SETTING) as (store, finish):
+            session.begin(store, self.config, self.mailbox_path, self.thoroughness)
             # The mailbox's size is known only once the pass has read it.
             self.emit(StageStarted(CLASSIFY, None))
             summary = run_classify(
@@ -205,6 +210,11 @@ class _Run:
             except ReviewExists:
                 summary = write_review_without_table(self.config, store, review_path, failures_path)
                 left = True
+            self.files_written = [] if left else [(session.REVIEW_TABLE, review_path)]
+            self.files_written.append((session.FAILURES_FILE, failures_path))
+            for kind, path in self.files_written:
+                session.record_written(store, kind, path)
+            session.touch(store)
         self.emit(StageFinished(REVIEW, DONE, summary, REVIEW_TABLE_LEFT if left else None))
         return summary, left
 

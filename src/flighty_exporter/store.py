@@ -35,6 +35,10 @@ Tables (extended by later passes):
   an extraction record (from the model or from markup): sender, subject,
   date, cleaned body and readable PDF text, uncut. Replaced whenever the
   message is extracted or resolved again; never saved for other messages.
+- ``session_values``: small named values for the session as a whole.
+- ``written_files``: every file the tool has written for this session
+  (review table, failures file, audit report, import files, manual-add
+  list), by resolved path, with what it is and when it was last written.
 """
 
 from __future__ import annotations
@@ -122,6 +126,11 @@ CREATE TABLE IF NOT EXISTS session_values (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS written_files (
+    path TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    written_at TEXT NOT NULL
+);
 """
 
 
@@ -129,6 +138,8 @@ class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        # True when this opening created the store file (a new session).
+        self.is_new = not path.exists()
         self._held = False
         self._db = sqlite3.connect(path)
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -493,6 +504,36 @@ class Store:
                     "INSERT OR REPLACE INTO session_values (key, value, updated_at) VALUES (?, ?, ?)",
                     (key, value, _now()),
                 )
+
+    # -- written files ----------------------------------------------------------
+    # A store from before this table existed gets it empty: the files written
+    # before then are not known.
+
+    def record_written_file(self, path: Path, kind: str) -> None:
+        """Record that the tool wrote the file at ``path`` (stored resolved)."""
+        with self._write():
+            self._db.execute(
+                "INSERT OR REPLACE INTO written_files (path, kind, written_at) VALUES (?, ?, ?)",
+                (str(path.resolve()), kind, _now()),
+            )
+
+    def written_files(self) -> list[tuple[str, Path, str]]:
+        """(kind, path, written at) for every file recorded as written, oldest first."""
+        rows = self._db.execute("SELECT kind, path, written_at FROM written_files ORDER BY written_at, rowid")
+        return [(kind, Path(path), written_at) for kind, path, written_at in rows]
+
+    def row_counts(self) -> dict[str, int]:
+        """How much the store holds: messages recorded, classifications (by
+        any model), extractions by a model, records read from markup, and
+        review decisions."""
+        queries = {
+            "messages": ("SELECT COUNT(*) FROM messages", ()),
+            "classifications": ("SELECT COUNT(*) FROM classifications", ()),
+            "model_extractions": ("SELECT COUNT(*) FROM extractions WHERE model != ?", (MARKUP_SOURCE,)),
+            "markup": ("SELECT COUNT(*) FROM extractions WHERE model = ?", (MARKUP_SOURCE,)),
+            "review_decisions": ("SELECT COUNT(*) FROM review_decisions", ()),
+        }
+        return {name: self._db.execute(query, params).fetchone()[0] for name, (query, params) in queries.items()}
 
     # -- held writes ------------------------------------------------------------
 

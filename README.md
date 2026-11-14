@@ -221,6 +221,39 @@ commands print and exit status 1; it never asks a question. If the review
 table exists and you have edited it, `run` leaves it as it is, says so, and
 still reports the flights; pass `--force` to regenerate it.
 
+#### Sessions: describing one and starting fresh
+
+A session is the store plus the files the tool wrote from it. The store
+records the mailbox and settings the session was started with (by the first
+command that brought a mailbox to it; later runs with other settings do not
+change them), when it was last active, and every file the tool writes for it:
+the review table, the failures file, the audit report, each import file and
+the manual-add list.
+
+```
+uv run flighty-exporter session
+uv run flighty-exporter session --fresh-preview
+```
+
+`session` prints the mailbox (and whether it still exists), the settings, when
+the session started and was last active, how far each stage got (messages
+recorded, classified, resolved from machine-readable data, at or above the
+threshold, extracted, flights and flights with a saved decision), whether it
+looks complete, the files it wrote that still exist, and what starting fresh
+would lose. It reads only the store, and with no store prints
+`No session yet.` `--fresh-preview` lists what starting fresh would delete,
+without deleting anything.
+
+`run --fresh` starts fresh without asking: it deletes the files recorded as
+written for the session that still exist, and only those, then the store and
+its SQLite side files (`-wal`, `-shm`, `-journal`), printing a line for each,
+and then runs from scratch. It never deletes the mailbox, the config file,
+downloaded models, the cached OpenFlights data, or anything the tool did not
+record writing, such as your own files in the same folder; a recorded path
+that is no longer a regular file is left alone. A store created before
+sessions were recorded knows none of the files it wrote, so starting fresh
+deletes just the store and says so. Without `--fresh`, `run` resumes.
+
 ### 1. classify
 
 ```
@@ -786,7 +819,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
 | `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
-| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
+| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
 
 The dependency rule, enforced by `tests/test_layout.py`:
