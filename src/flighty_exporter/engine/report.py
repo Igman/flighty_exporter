@@ -55,7 +55,15 @@ class RunReport:
         return failed
 
 
-def format_report(report: RunReport) -> str:
+def run_next_step(report: RunReport) -> str:
+    """The next step after the ``run`` command: the spreadsheet route."""
+    return f"Next step: check {report.review.review_path}, then run export."
+
+
+def format_report(report: RunReport, next_step: str) -> str:
+    """The report as text, ending with ``next_step``, which depends on the
+    caller: ``run_next_step`` for the ``run`` command, the review key in the
+    application."""
     review = report.review
     lines = [
         "Run finished.",
@@ -88,5 +96,5 @@ def format_report(report: RunReport) -> str:
     lines += [f"  {what}: {where}" for what, where in report.files_written]
     if report.review_table_left:
         lines.append(f"Note: {REVIEW_TABLE_LEFT} ({review.review_path}).")
-    lines.append(f"Next step: check {review.review_path}, then run export.")
+    lines.append(next_step)
     return "\n".join(lines)

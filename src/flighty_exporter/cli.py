@@ -41,7 +41,7 @@ from .ollama.pull import KEPT_PARTIAL, PullFailed, PullProgress, format_bytes, p
 from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
 from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
-from .engine.report import format_report
+from .engine.report import format_report, run_next_step
 from .engine.events import AUDIT, INCLUDE, STOPPED
 from .engine.thorough import format_include
 from .flights.decisions import InvalidCorrection, is_date, resolve_key
@@ -554,7 +554,7 @@ class _RunPrinter:
         elif isinstance(event, Problem):
             print(f"error: {event.message}", file=sys.stderr)
         elif isinstance(event, RunFinished):
-            print(format_report(event.report))
+            print(format_report(event.report, run_next_step(event.report)))
 
     def _summary(self, event: StageFinished) -> None:
         if event.stage == AUDIT:

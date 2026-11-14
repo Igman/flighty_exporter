@@ -94,7 +94,7 @@ ADDRESS_HINT = (
     "machine, or set `allow_remote = true` under [ollama] in the config file, then start "
     "flighty-exporter again. Press q to quit."
 )
-REVIEW_NEXT = "Press enter to review the flights, or q to quit."
+REVIEW_NEXT = "Next step: press enter to review the flights (or q to quit)."
 
 def human_duration(seconds: float) -> str:
     minutes = round(seconds / 60)
@@ -305,7 +305,7 @@ class ProgressScreen(Screen):
         elif isinstance(event, RunFinished):
             self.report = event.report
             report = self.query_one("#report", Static)
-            report.update(escape(format_report(event.report)) + "\n\n" + REVIEW_NEXT)
+            report.update(escape(format_report(event.report, REVIEW_NEXT)))
             report.display = True
             report.scroll_visible()
             self.post_message(self.RunCompleted(event.report))
