@@ -292,11 +292,7 @@ def _plan(
     manual: list[tuple[KeptRow, str]] = []
     candidates: list[KeptRow] = []
     for row in kept:
-        reasons = []
-        if not row.flight.flight_number:
-            reasons.append("no flight number")
-        if row.flight.date < FIRST_MATCHABLE_DATE:
-            reasons.append(f"dated before {FIRST_MATCHABLE_DATE.year}")
+        reasons = _unmatchable(row.flight)
         if reasons:
             manual.append((row, "; ".join(reasons)))
         else:
@@ -323,6 +319,32 @@ def _plan(
         for row, reason in manual
     ]
     return plan
+
+
+def _unmatchable(flight: import_format.Flight) -> list[str]:
+    """Why Flighty cannot match this flight whatever the reference data says."""
+    reasons = []
+    if not flight.flight_number:
+        reasons.append("no flight number")
+    if flight.date < FIRST_MATCHABLE_DATE:
+        reasons.append(f"dated before {FIRST_MATCHABLE_DATE.year}")
+    return reasons
+
+
+def manual_add_reason(reviewed: ReviewedFlight, reference: import_format.OpenFlights | None) -> str | None:
+    """Why the export would put this flight on the manual-add list, None if
+    it would not (it is not kept, cannot be exported at all, or goes in the
+    import file). Without the reference data, only the reasons that do not
+    need it are known."""
+    segment = reviewed.flight.segment
+    if not reviewed.keep or not is_date(segment.date) or not segment.origin or not segment.destination:
+        return None
+    flight = import_format.Flight(date.fromisoformat(segment.date), segment.origin, segment.destination,
+                                  segment.flight_number)
+    reasons = _unmatchable(flight)
+    if not reasons and reference is not None:
+        reasons = reference.unmatched(flight)
+    return "; ".join(reasons) or None
 
 
 def _write(plan: ExportPlan, summary: ExportSummary, output_dir: Path, now: datetime | None) -> ExportSummary:

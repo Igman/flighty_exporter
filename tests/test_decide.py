@@ -88,6 +88,22 @@ def test_a_flight_without_a_number_is_picked_by_its_route_and_advisory_reasons_m
     assert decision_rows(workspace)["2025-08-01 OSL-LIS"][0] == "no"
 
 
+def test_a_kept_flight_for_the_manual_add_list_shows_whether_it_was_added_by_hand(workspace):
+    run_passes(workspace, [GOOD, NO_NUMBER])
+    added = "added by hand in Flighty"
+
+    shown = decide(workspace, "2025-08-01", "--route", "OSL", "LIS", "--keep")
+    assert field(shown.stdout, added) == "no (on the manual-add list: no flight number)"
+
+    assert workspace.run("mark-added", "2025-08-01", "--route", "OSL", "LIS").returncode == 0
+    shown = decide(workspace, "2025-08-01", "--route", "OSL", "LIS", "--keep")
+    assert field(shown.stdout, added) == "yes (on the manual-add list: no flight number)"
+
+    # A flight that goes in the import file, or one not kept, is not on the list.
+    assert added not in decide(workspace, "2025-05-12", "ZZ1234", "--keep").stdout
+    assert added not in decide(workspace, "2025-08-01", "--route", "OSL", "LIS", "--drop").stdout
+
+
 # -- corrections -------------------------------------------------------------------------------
 
 

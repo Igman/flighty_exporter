@@ -498,7 +498,7 @@ def cmd_decide(args: argparse.Namespace, config: Config) -> int:
                 print(f"error: {exc}; nothing was saved", file=sys.stderr)
                 return EXIT_ERROR
         session.touch(store)
-    print("\n".join(flight_view.detail_lines(reviewed)))
+    print("\n".join(flight_view.detail_lines(reviewed, reviewer.flight_list.reference)))
     return EXIT_OK
 
 

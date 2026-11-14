@@ -20,7 +20,9 @@ every flight whatever the filters show.
 **Detail** (``detail_lines``): every field of one flight, its keep and
 whether that is the pre-set value or the user's choice, each attention
 reason marked blocking or advisory, each correction with the value
-consolidation produced next to the corrected one, and its source emails.
+consolidation produced next to the corrected one, for a kept flight the
+export would put on the manual-add list whether it is ticked as added by
+hand in Flighty, and its source emails.
 
 The lists beside the flights: ``dropped_lines`` (bookings dropped as other
 passengers') and ``failure_lines`` (emails that passed the first filter but
@@ -33,6 +35,8 @@ from dataclasses import dataclass
 
 from ..flights.decisions import ReviewedFlight
 from ..flights.validate import is_blocking
+from .export import manual_add_reason
+from .openflights import OpenFlights
 from .review import FlightList, dropped_line
 
 COLUMNS = ("date", "flight", "route", "airline", "booking", "evidence", "keep", "corrected", "reasons")
@@ -170,7 +174,9 @@ def corrections(reviewed: ReviewedFlight) -> list[tuple[str, str, str]]:
     return found
 
 
-def detail_lines(reviewed: ReviewedFlight) -> list[str]:
+def detail_lines(reviewed: ReviewedFlight, reference: OpenFlights | None = None) -> list[str]:
+    """``reference``: the reference data (``FlightList.reference``), to tell
+    whether a kept flight goes on the manual-add list."""
     flight = reviewed.flight
     segment = flight.segment
     fields = [
@@ -197,6 +203,10 @@ def detail_lines(reviewed: ReviewedFlight) -> list[str]:
         lines.append("corrections (found -> corrected):")
         label_width = max(len(label) for label, _, _ in found) + 1
         lines += [f"  {label + ':':<{label_width}} {before} -> {after}" for label, before, after in found]
+    manual = manual_add_reason(reviewed, reference)
+    if manual is not None:
+        added = "yes" if reviewed.added else "no"
+        lines.append(f"added by hand in Flighty: {added} (on the manual-add list: {manual})")
     lines.append(f"source emails: {len(flight.sources)}")
     lines += [f"  {source.message_date}  {source.subject}" for source in flight.sources]
     return lines

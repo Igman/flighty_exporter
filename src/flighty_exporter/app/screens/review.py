@@ -171,7 +171,8 @@ class ReviewScreen(Screen):
 
     def _draw_detail(self) -> None:
         reviewed = self._selected()
-        text = "\n".join(flight_view.detail_lines(reviewed)) if reviewed else "No flight selected."
+        reference = self.reviewer.flight_list.reference if self.reviewer else None
+        text = "\n".join(flight_view.detail_lines(reviewed, reference)) if reviewed else "No flight selected."
         self.query_one("#detail", Static).update(escape(text))
 
     def on_data_table_row_highlighted(self, message: DataTable.RowHighlighted) -> None:
