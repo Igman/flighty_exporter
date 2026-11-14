@@ -211,10 +211,32 @@ def cmd_review(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_export(args: argparse.Namespace, config: Config) -> int:
+    """Three cases: a review table given or present is exported, after its
+    keep values and corrections are recorded as decisions in the store (if
+    there is one); with no review table, or with --from-store, the store's
+    flight list is exported with the saved decisions applied."""
     review_path = Path(args.review).expanduser() if args.review else config.review_output
     output_dir = Path(args.output_dir).expanduser() if args.output_dir else config.export_output_dir
+    store_path = _store_path(args, config)
+    if args.from_store and args.review:
+        raise UsageError("--from-store exports from the store and ignores the review table; do not pass --review too")
+    from_store = args.from_store or (not args.review and not review_path.exists() and store_path.is_file())
+    if from_store and not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
     try:
-        summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)
+        if from_store:
+            with Store(store_path) as store:
+                summary = export.run_store_export(
+                    config, store, output_dir, config.export_data_dir, config.export_data_url
+                )
+        elif store_path.is_file():
+            with Store(store_path) as store:
+                summary = export.run_export(
+                    review_path, output_dir, config.export_data_dir, config.export_data_url, store=store, config=config
+                )
+        else:
+            summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)
     except (export.ExportError, ReferenceDataError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
@@ -301,6 +323,14 @@ def _export_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--review", help="edited review CSV to read (overrides [review] output in config)")
     parser.add_argument(
         "--output-dir", help="directory for the import file and manual-add list (overrides [export] output_dir)"
+    )
+    parser.add_argument(
+        "--store", help="SQLite store file to record decisions in or export from (overrides `store` in config)"
+    )
+    parser.add_argument(
+        "--from-store",
+        action="store_true",
+        help="export the store's flight list with the saved review decisions, even if a review table exists",
     )
 
 

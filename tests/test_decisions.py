@@ -85,3 +85,94 @@ def test_review_table_names_each_flight_in_a_last_flight_id_column(workspace):
     path = workspace.root / REVIEW
     assert header(path)[-1] == "flight_id"
     assert [r["flight_id"] for r in read_csv(path)] == ["2025-05-12 ZZ1234", "2025-08-01 OSL-LIS"]
+
+
+# -- the spreadsheet route records decisions ----------------------------------------------
+
+
+def test_keep_choice_in_an_edited_table_is_recorded_and_a_forced_review_reflects_it(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no"))
+
+    exported = export(workspace)
+
+    assert exported.count(RECORDED) == 1
+    assert "Review table read from" in exported.stdout
+    assert exported.count("flights exported") == 1
+    # The edited table is still the user's: review will not overwrite it...
+    refused = workspace.run("review")
+    assert refused.returncode == 1 and "--force" in refused.stderr
+    # ...but a table written elsewhere, or a forced one, carries the decision.
+    review(workspace, "--output", str(workspace.root / "fresh.csv"))
+    assert rows_by_id(workspace.root / "fresh.csv")["2025-06-01 QQ410"]["keep"] == "no"
+    forced = review(workspace, "--force")
+    rows = rows_by_id(workspace.root / REVIEW)
+    assert [rows[k]["keep"] for k in ("2025-05-12 ZZ1234", "2025-06-01 QQ410")] == ["yes", "no"]
+    assert forced.count(DISCARDED) == 0
+    # Exporting the regenerated table records nothing new.
+    assert export(workspace).count(RECORDED) == 0
+
+
+def test_correction_is_validated_and_its_attention_reasons_recomputed(workspace):
+    run_passes(workspace, [GOOD, OTHER, FLAGGED])
+    review(workspace)
+    rows = rows_by_id(workspace.root / REVIEW)
+    assert view(rows["2025-07-01 ZZ300"]) == ("no", "2025-07-01", "ZZ300", "LIS", "XQX",
+                                              "unknown airport XQX; low confidence")
+
+    def edit(rows):
+        # Fixes the flagged flight and approves it.
+        rows["2025-07-01 ZZ300"].update(destination="osl", keep="yes")
+        # Introduces an unknown airport, and leaves keep as the table showed it.
+        rows["2025-05-12 ZZ1234"].update(destination="XQY")
+        # Introduces one, and agrees with the check that it should not be kept.
+        rows["2025-06-01 QQ410"].update(origin="xqz", flight_number="qq 411", keep="no")
+
+    edit_review(workspace, edit)
+    exported = export(workspace)
+
+    assert exported.count(RECORDED) == 3
+    review(workspace, "--force")
+    rows = rows_by_id(workspace.root / REVIEW)
+    assert view(rows["2025-07-01 ZZ300"]) == ("yes", "2025-07-01", "ZZ300", "LIS", "OSL", "")
+    assert rows["2025-07-01 ZZ300"]["confidence"] == "0.90"
+    # The user's keep (yes, as the table said) wins over the check's pre-set no.
+    assert view(rows["2025-05-12 ZZ1234"]) == ("yes", "2025-05-12", "ZZ1234", "LIS", "XQY",
+                                               "unknown airport XQY; low confidence")
+    assert view(rows["2025-06-01 QQ410"]) == ("no", "2025-06-01", "QQ411", "XQZ", "KEF",
+                                              "unknown airport XQZ; low confidence")
+    assert rows["2025-06-01 QQ410"]["needs_attention"] == "yes"
+
+
+def test_rows_sorted_differently_in_the_spreadsheet_still_find_their_flights(workspace):
+    run_passes(workspace, [GOOD, OTHER, FLAGGED])
+    review(workspace)
+
+    def edit(rows):
+        rows["2025-05-12 ZZ1234"].update(keep="no")
+        rows["2025-07-01 ZZ300"].update(destination="OSL", keep="yes")
+
+    edit_review(workspace, edit, reverse=True)
+    assert export(workspace).count(RECORDED) == 2
+
+    review(workspace, "--force")
+    rows = rows_by_id(workspace.root / REVIEW)
+    assert [rows[k]["keep"] for k in ("2025-05-12 ZZ1234", "2025-06-01 QQ410", "2025-07-01 ZZ300")] == [
+        "no", "yes", "yes"]
+    assert rows["2025-07-01 ZZ300"]["destination"] == "OSL"
+
+
+def test_a_later_edit_replaces_the_recorded_decision(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no", destination="LHR"))
+    assert export(workspace).count(RECORDED) == 1
+
+    # The user changes their mind in the same table: keep it, and put the airport back.
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="yes", destination="KEF"))
+    assert export(workspace).count(RECORDED) == 1
+
+    review(workspace, "--force")
+    assert view(rows_by_id(workspace.root / REVIEW)["2025-06-01 QQ410"]) == (
+        "yes", "2025-06-01", "QQ410", "AMS", "KEF", "")
