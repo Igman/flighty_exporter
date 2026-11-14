@@ -284,7 +284,7 @@ class ExportScreen(Screen):
         self.plan()
 
     def action_back(self) -> None:
-        self.app.open_review(self.app.report)  # type: ignore[attr-defined]
+        self.app.back_to_review()  # type: ignore[attr-defined]
 
     def action_quit(self) -> None:
         self.app.exit(0)

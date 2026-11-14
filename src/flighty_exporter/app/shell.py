@@ -21,7 +21,7 @@ from ..engine.report import RunReport
 from .runner import RunInputs
 from .screens.export import ExportScreen
 from .screens.progress import ProgressScreen
-from .screens.review import ReviewScreen
+from .screens.review import ReviewScreen, ReviewView
 from ..engine import session
 from ..engine.setup import answers_from_config
 from .screens.setup import SetupScreen
@@ -40,6 +40,7 @@ class FlightyApp(App[int]):
         self.config = config
         self.config_path = config_path
         self.report: RunReport | None = None  # the last finished run's report
+        self.review_view: ReviewView | None = None  # the review's filters and selection while exporting
 
     def on_mount(self) -> None:
         self.push_screen(self.first_screen())
@@ -68,14 +69,21 @@ class FlightyApp(App[int]):
     def open_review(self, report: RunReport | None) -> None:
         """Show the review screen for the finished run ``report``. Called
         from the progress screen's review key once the run is complete (the
-        key is offered only then), and by later screens to come back to
-        review; the screen reads the flight list afresh from the store."""
+        key is offered only then) and from the startup prompt; the screen
+        reads the flight list afresh from the store."""
         self.show_screen(ReviewScreen(self.config, report))
 
-    def open_export(self) -> None:
-        """Show the export screen (from the review). A new screen each time,
-        so it plans afresh from the decisions saved since."""
+    def open_export(self, view: ReviewView) -> None:
+        """Show the export screen (from the review, whose view state is kept
+        for ``back_to_review``). A new screen each time, so it plans afresh
+        from the decisions saved since."""
+        self.review_view = view
         self.show_screen(ExportScreen(self.config))
+
+    def back_to_review(self) -> None:
+        """Back from the export screen: the review, read afresh from the
+        store, with the filters and the selected flight it had."""
+        self.show_screen(ReviewScreen(self.config, self.report, self.review_view))
 
     async def action_quit(self) -> None:
         request_quit = getattr(self.screen, "request_quit", None)

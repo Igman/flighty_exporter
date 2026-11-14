@@ -24,6 +24,7 @@ then the table is refilled and the cursor follows the flight.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich.markup import escape
@@ -55,6 +56,15 @@ def styled_row(reviewed: ReviewedFlight) -> list[str | Text]:
     return cells
 
 
+@dataclass(frozen=True)
+class ReviewView:
+    """The review's view state, kept while the export screen is shown so
+    that going back restores it: the filters and the selected flight's key."""
+
+    filters: flight_view.Filters
+    selected: str | None
+
+
 class ReviewScreen(Screen):
     BINDINGS = [
         Binding("space", "toggle_keep", "Keep/drop"),
@@ -80,12 +90,13 @@ class ReviewScreen(Screen):
     #detail-box { height: 40%; min-height: 8; border: round $primary; padding: 0 1; }
     """
 
-    def __init__(self, config: Config, report: RunReport | None) -> None:
+    def __init__(self, config: Config, report: RunReport | None, view: ReviewView | None = None) -> None:
         super().__init__()
         self.config = config
         self.store_path: Path = config.store
         self.report = report
-        self.filters = flight_view.Filters()
+        self.filters = view.filters if view is not None else flight_view.Filters()
+        self.follow = view.selected if view is not None else None  # the flight to select when the table fills
         self.reviewer: Reviewer | None = None
 
     def compose(self) -> ComposeResult:
@@ -107,7 +118,7 @@ class ReviewScreen(Screen):
             self._show_empty()
             self.refresh_bindings()
             return
-        self._fill()
+        self._fill(follow=self.follow)
         table.focus()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -280,7 +291,8 @@ class ReviewScreen(Screen):
         self.app.push_screen(ListScreen(f"{flight_view.FAILURES_HEADING}: {len(lines)}", lines))
 
     def action_export(self) -> None:
-        self.app.open_export()  # type: ignore[attr-defined]
+        selected = self._selected()
+        self.app.open_export(ReviewView(self.filters, selected.key if selected else None))  # type: ignore[attr-defined]
 
 
 class EmailScreen(Screen):
