@@ -29,9 +29,10 @@ import re
 import socket
 import urllib.error
 import urllib.parse
-import urllib.request
 from collections.abc import Callable
 from typing import Any
+
+from .connection import OLLAMA_OPENER, PreflightError
 
 MIN_VERSION = (0, 35, 0)
 # Preflight requests only ask the server about itself: a few seconds is
@@ -41,16 +42,6 @@ PREFLIGHT_TIMEOUT = 5.0
 ALLOW_REMOTE_HINT = "set `allow_remote = true` under [ollama] in the config file, or pass --allow-remote"
 
 _VERSION = re.compile(r"^[vV]?(\d+)\.(\d+)(?:\.(\d+))?")
-
-
-# Every request to Ollama goes through this opener, which ignores proxy
-# settings (HTTP_PROXY and the like): a proxy would carry email content off
-# this machine even when the address itself is local.
-OLLAMA_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-
-class PreflightError(Exception):
-    """The pass cannot start; the message says why and what to do."""
 
 
 # -- privacy: is the address on this machine? ------------------------------------

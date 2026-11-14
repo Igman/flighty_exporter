@@ -26,7 +26,7 @@ from typing import Any
 
 from ..flights.records import Decision
 from ..mail.reader import Message
-from .preflight import OLLAMA_OPENER
+from .connection import OLLAMA_OPENER, OllamaUnreachable
 
 ENDPOINT = "/v1/systemone"
 
@@ -67,10 +67,6 @@ class DecisionError(Exception):
 
 class PromptTooLarge(DecisionError):
     """The server rejected the prompt as over its token or size limit."""
-
-
-class OllamaUnreachable(Exception):
-    """The server could not be reached at all; the run should stop."""
 
 
 class DecisionClient:

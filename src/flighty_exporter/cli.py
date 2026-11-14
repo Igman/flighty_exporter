@@ -19,9 +19,10 @@ from pathlib import Path
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
 from .mail.reader import MailboxError
-from .ollama.decision import DecisionClient, OllamaUnreachable
+from .ollama.connection import OllamaUnreachable, PreflightError
+from .ollama.decision import DecisionClient
 from .ollama.extraction import ExtractionClient
-from .ollama.preflight import PREFLIGHT_TIMEOUT, PreflightError, check_address, check_server
+from .ollama.preflight import PREFLIGHT_TIMEOUT, check_address, check_server
 from .output import export, review
 from .output.openflights import ReferenceDataError
 from .stages import audit, extract

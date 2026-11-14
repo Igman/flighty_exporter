@@ -39,8 +39,7 @@ from ..flights.records import (
     validate_record,
 )
 from ..mail.reader import Message
-from .decision import OllamaUnreachable
-from .preflight import OLLAMA_OPENER
+from .connection import OLLAMA_OPENER, OllamaUnreachable
 
 ENDPOINT = "/api/chat"
 
