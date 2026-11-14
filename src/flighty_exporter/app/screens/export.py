@@ -34,6 +34,7 @@ from ...engine import session
 from ...output import export
 from ...output.openflights import ReferenceDataError
 from ...store import Store
+from ..paths import path_text
 
 # What the screen is doing.
 PLANNING = "planning"
@@ -189,13 +190,13 @@ class ExportScreen(Screen):
         if summary.import_path is None:
             text = "No flight qualifies for the import file, so none was written."
         else:
-            text = f"Written to:\n{summary.import_path.resolve()}\n\n"
+            text = f"Written to:\n{path_text(summary.import_path.resolve())}\n\n"
             if export.reveal_command(summary.import_path) is not None:
                 text += "Press o to show it in Finder."
             else:
-                text += f"Open this folder in your file manager to find it:\n{summary.import_path.resolve().parent}"
+                text += f"Open this folder in your file manager to find it:\n{path_text(summary.import_path.resolve().parent)}"
         if summary.manual_add_path is not None:
-            text += f"\n\nManual-add list: {summary.manual_add_path.resolve()}"
+            text += f"\n\nManual-add list:\n{path_text(summary.manual_add_path.resolve())}"
         written.update(escape(text))
         written.display = True
         self.query_one("#steps").display = summary.import_path is not None

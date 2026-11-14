@@ -48,6 +48,7 @@ from ...engine.thorough import LOWERED, IncludeSummary
 from ...stages.audit import AuditResult
 from ...stages.classify import ClassifySummary
 from ...stages.extract import ExtractSummary
+from ..paths import path_text
 from ..runner import EngineEvent, EngineRunner, RunEnded, RunInputs
 
 # What the screen is doing.
@@ -221,7 +222,7 @@ class ProgressScreen(Screen):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="body"):
             yield Static(
-                f"Mailbox: {escape(str(self.inputs.mailbox))}\nThoroughness: {self.inputs.thoroughness}",
+                f"Mailbox:\n{escape(path_text(self.inputs.mailbox, '  '))}\nThoroughness: {self.inputs.thoroughness}",
                 id="heading",
             )
             yield Static(STATUS[STARTING], id="status")

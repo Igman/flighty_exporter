@@ -34,12 +34,13 @@ from ...engine.setup import (
     parse_name_variants,
     write_answers,
 )
+from ..paths import path_text
 from .readiness import ReadinessScreen
 
 MAILBOX_HELP = (
     "The .mbox file from your Gmail Takeout export, usually "
     "[i]Takeout/Mail/All mail Including Spam and Trash.mbox[/i]. You can drag the file into the terminal "
-    "to paste its path. A relative path is read from {cwd}."
+    "to paste its path. A relative path is read from:\n{cwd}"
 )
 NAMES_HELP = (
     "Your name as it appears on bookings, so that flights you booked for other people are left out. List "
@@ -89,11 +90,11 @@ class SetupScreen(Screen):
             if self.notice:
                 yield Static(escape("\n".join(self.notice)), id="notice")
             yield Static(
-                f"[b]Setup[/b]: three questions. The answers are written to {escape(str(config_path))}, "
-                "keeping any other settings in it.",
+                "[b]Setup[/b]: three questions. The answers are written to the config file below, keeping any "
+                f"other settings in it:\n{escape(path_text(config_path, '  '))}",
             )
             yield Static("1. Your mailbox file", classes="question")
-            yield Static(MAILBOX_HELP.format(cwd=escape(str(Path.cwd()))), classes="help")
+            yield Static(MAILBOX_HELP.format(cwd=escape(path_text(Path.cwd(), "  "))), classes="help")
             yield Input(self.answers.mailbox, placeholder="path to the .mbox file", id="mailbox")
             yield Static("", id="mailbox-error", classes="error")
             yield Static("2. Your name variants", classes="question")
@@ -169,7 +170,7 @@ class SetupScreen(Screen):
         names = self._names()
         listed = "\n".join(f"    {escape(name)}" for name in names)
         text = (
-            f"Mailbox:       {escape(str(mailbox)) if mailbox else '[i]not entered yet[/i]'}\n"
+            f"Mailbox:       {escape(path_text(mailbox, ' ' * 15).lstrip()) if mailbox else '[i]not entered yet[/i]'}\n"
             f"Name variants: {escape(format_names(names)) if not names else ''}\n"
             + (listed + "\n" if names else "")
             + f"Thoroughness:  {self._thoroughness().capitalize()}\n\n"

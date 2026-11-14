@@ -25,6 +25,7 @@ from textual.widgets import Footer, Static
 from ...engine import session
 from ...engine.session import SessionDescription
 from ...engine.setup import answers_from_session, format_names
+from ..paths import path_text
 from ..runner import RunInputs
 from .progress import ProgressScreen
 from .setup import SetupScreen
@@ -42,13 +43,13 @@ def when(value: str | None) -> str:
 
 def describe_lines(d: SessionDescription) -> list[str]:
     """The session, as markup lines for the prompt."""
-    lines = []
+    lines = ["[b]Store[/b]", escape(path_text(d.store_path, "  "))]
     if d.mailbox is None:
         lines.append("[b]Mailbox[/b]       unknown (this session was started by an older version)")
     elif d.mailbox_exists:
-        lines.append(f"[b]Mailbox[/b]       {escape(str(d.mailbox))}")
+        lines += ["[b]Mailbox[/b]", escape(path_text(d.mailbox, "  "))]
     else:
-        lines.append(f"[b]Mailbox[/b]       {escape(str(d.mailbox))} [red](no longer there)[/red]")
+        lines += ["[b]Mailbox[/b] [red](no longer there)[/red]", escape(path_text(d.mailbox, "  "))]
     lines.append(f"[b]Started[/b]       {when(d.started_at)}")
     lines.append(f"[b]Last active[/b]   {when(d.last_active)}")
     names = "unknown" if d.passenger_names is None else format_names(d.passenger_names)
@@ -194,7 +195,7 @@ class StartupScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#session").border_title = f"Session in {self.description.store_path}"
+        self.query_one("#session").border_title = "Session"
 
     def action_resume(self) -> None:
         if self.description.finished:
