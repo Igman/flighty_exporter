@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,8 @@ def mailbox_problem(path: Path | None) -> str | None:
         with path.open("rb") as handle:
             start = handle.read(1024)
     except OSError as exc:
+        if sys.platform != "darwin":
+            return f"{path} cannot be read ({exc.strerror or exc}). Check that you can open it, then try again."
         return (
             f"{path} cannot be read ({exc.strerror or exc}). If it is in a protected folder such as Downloads "
             "or Documents, allow your terminal to read it (System Settings > Privacy & Security), or move the "
@@ -116,7 +119,7 @@ def mailbox_problem(path: Path | None) -> str | None:
     if not start:
         return f"{path} is empty. An mbox file begins with a line starting with \"From \"."
     if not start.startswith(b"From "):
-        first = start.split(b"\n", 1)[0][:60].decode("utf-8", "replace")
+        first = start.split(b"\n", 1)[0].rstrip(b"\r")[:60].decode("utf-8", "replace")
         return (
             f"{path} does not look like an mbox file: an mbox begins with a line starting with \"From \", but "
             f"this file begins with {first!r}. Point at the .mbox file from Gmail Takeout."

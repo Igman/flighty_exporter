@@ -9,10 +9,10 @@ and the import steps are ``export.FLIGHTY_IMPORT_STEPS``. What the screen
 owns is view state: what it is doing, the checklist it last drew and the
 selected row. It writes only local files; nothing is sent anywhere.
 
-Keys: ``e`` (or Enter) exports; ``o`` shows the import file in Finder
-(macOS); space ticks or unticks the selected manual-add flight; ``r``
-retries after the reference data could not be loaded; ``b`` goes back to
-the review; ``q`` quits.
+Keys: ``e`` (or Enter) exports; ``o`` shows the import file in the file
+manager (Finder on macOS, File Explorer on Windows); space ticks or unticks
+the selected manual-add flight; ``r`` retries after the reference data could
+not be loaded; ``b`` goes back to the review; ``q`` quits.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class ExportScreen(Screen):
     BINDINGS = [
         Binding("e", "export", "Export"),
         Binding("enter", "export", "Export", show=False, priority=True),
-        Binding("o", "reveal", "Show in Finder"),
+        Binding("o", "reveal", f"Show in {export.file_manager_name()}"),
         Binding("space", "toggle", "Tick"),
         Binding("r", "retry", "Retry"),
         Binding("b", "back", "Back to review"),
@@ -173,7 +173,7 @@ class ExportScreen(Screen):
         else:
             text = f"Written to:\n{path_text(summary.import_path.resolve())}\n\n"
             if export.reveal_command(summary.import_path) is not None:
-                text += "Press o to show it in Finder."
+                text += f"Press o to show it in {export.file_manager_name()}."
             else:
                 text += f"Open this folder in your file manager to find it:\n{path_text(summary.import_path.resolve().parent)}"
         if summary.manual_add_path is not None:
@@ -244,7 +244,7 @@ class ExportScreen(Screen):
         if self.import_path is None:
             return
         if export.reveal(self.import_path):
-            self.notify("Shown in Finder.")
+            self.notify(f"Shown in {export.file_manager_name()}.")
         else:
             self.notify(f"Cannot show files on this system; the file is at {self.import_path.resolve()}",
                         severity="warning", timeout=10)

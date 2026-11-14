@@ -52,7 +52,7 @@ def configure(workspace, data_dir: Path | None = None, data_url: str | None = No
         data_dir = write_reference_data(workspace.root / "openflights")
     workspace.write_config(
         f'[ollama]\naddress = "{workspace.ollama.url}"\n\n'
-        f'[export]\ndata_dir = "{data_dir}"\ndata_url = "{data_url or unreachable_url()}"\n{extra}'
+        f'[export]\ndata_dir = "{Path(data_dir).as_posix()}"\ndata_url = "{data_url or unreachable_url()}"\n{extra}'
     )
     return data_dir
 

@@ -33,8 +33,9 @@ What it is not:
 
 **Requirements**
 
-- macOS or Linux, and [uv](https://docs.astral.sh/uv/) (it installs Python
-  3.12 or later and the dependencies for you).
+- macOS, Linux or Windows, and [uv](https://docs.astral.sh/uv/) (it
+  installs Python 3.12 or later and the dependencies for you). On Windows,
+  use Windows Terminal (with PowerShell or Command Prompt).
 - [Ollama](https://ollama.com/download) 0.35.0 or later, running locally.
 - The two models: `nimble` (the decision model, about 9.3 GB) and
   `gemma4:12b-it-q4_K_M` (the extraction model, about 8 GB). The application
@@ -297,8 +298,8 @@ hand, and how many are not kept (the same numbers as
   the same minute as the previous one replaces it) and `manual-add.csv`,
   next to the config file. The screen shows the import file's full path and
   the steps for [importing it into Flighty](#importing-into-flighty).
-- `o` shows the import file in Finder (macOS; elsewhere the screen names the
-  folder).
+- `o` shows the import file in Finder (macOS) or File Explorer (Windows);
+  elsewhere the screen names the folder.
 - Space ticks the selected flight on the "Add by hand in Flighty" checklist
   (date, route, flight number, reason) once you have entered it in Flighty.
   Ticks are saved at once and written to `manual-add.csv` without exporting
@@ -490,7 +491,8 @@ when the address is local.
 **The only other network access** is the download of OpenFlights'
 `airports.dat` and `airlines.dat` from `[export] data_url` the first time
 review or export needs them. They are cached in `[export] data_dir`
-(default `~/.cache/flighty_exporter/openflights`) and reused; the download
+(default `~/.cache/flighty_exporter/openflights`, on Windows
+`C:\Users\<you>\.cache\flighty_exporter\openflights`) and reused; the download
 sends nothing about you. Model downloads (`pull-models`, `d` in setup) are
 made by your Ollama server, only after you confirm.
 
@@ -568,7 +570,9 @@ says so) unless `--force`. `--fresh` starts fresh without asking (deleting
 what [starting fresh](#resume-or-start-fresh-later-launches) deletes,
 printing a line for each) and then runs from scratch. A model-server problem
 stops it with the commands' message and status 1; Ctrl-C stops it with 130
-and `kill` (SIGTERM) after the message in progress with 143.
+and `kill` (SIGTERM) after the message in progress with 143. Windows has no
+SIGTERM: there Ctrl-Break (or a CTRL_BREAK_EVENT sent to its process group)
+stops it after the message in progress, with 143.
 
 ### classify
 
@@ -952,6 +956,10 @@ extract) again. To start over with the same models, start fresh.
 ```
 uv run pytest
 ```
+
+On Windows a few tests are skipped: those that send Ctrl-C to a single
+process or open a pseudo-terminal (Windows can do neither) and the one that
+makes a file unreadable with `chmod`.
 
 **One seam.** The tests drive the tool as a user does: each builds a small
 mbox of invented emails and a config file in a temporary folder, runs the

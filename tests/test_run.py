@@ -7,9 +7,11 @@ from __future__ import annotations
 import signal
 import sqlite3
 import threading
+from pathlib import Path
 
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import FLIGHT_BODY, email, image_only_pdf, write_mbox
+from stop_signals import POSIX_ONLY_CTRL_C, ask_to_stop
 from test_consolidation import ROBIN, SAM, record, seg
 from test_decisions import DISCARDED, GOOD, OTHER, edit_review, rows_by_id
 from test_decisions import export as export_from_table
@@ -147,9 +149,11 @@ def start_blocked_on_third_chat(workspace, mbox, sig):
     proc = workspace.start("run", "--mailbox", str(mbox))
     try:
         assert third_request.wait(timeout=30), "run never sent a third extraction request"
-        proc.send_signal(sig)
         if sig == signal.SIGTERM:
+            ask_to_stop(proc)
             release.set()  # the message in progress is finished before the run stops
+        else:
+            proc.send_signal(sig)
         stdout, stderr = proc.communicate(timeout=30)
     finally:
         release.set()
@@ -159,6 +163,7 @@ def start_blocked_on_third_chat(workspace, mbox, sig):
     return proc, stdout, stderr
 
 
+@POSIX_ONLY_CTRL_C
 def test_interrupted_run_resumes_without_repeating_model_requests(workspace):
     subjects, mbox = itineraries(workspace)
 
@@ -355,6 +360,7 @@ def test_report_states_what_was_found_what_failed_where_the_files_are_and_what_t
     result = run(workspace, "--mailbox", str(mbox), "--output", "out/review.csv", "--failures", "out/failures.csv")
 
     report = result.stdout[result.stdout.index("Run finished."):]
+    review_table = Path("out", "review.csv")  # as given, with this system's separator
     assert report.splitlines() == [
         "Run finished.",
         "  flights found:              4",
@@ -374,9 +380,9 @@ def test_report_states_what_was_found_what_failed_where_the_files_are_and_what_t
         "  PDF attachments not read:   1",
         "  check for missed flight emails: skipped (quick)",
         "Files written:",
-        "  review table: out/review.csv",
-        "  failures file: out/failures.csv",
-        "Next step: check out/review.csv, then run export.",
+        f"  review table: {review_table}",
+        f"  failures file: {Path('out', 'failures.csv')}",
+        f"Next step: check {review_table}, then run export.",
     ]
     assert (workspace.root / "out" / "review.csv").exists()
     assert (workspace.root / "out" / "failures.csv").exists()

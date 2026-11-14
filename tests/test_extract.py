@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import FLIGHT_BODY, email, write_mbox
+from stop_signals import POSIX_ONLY_CTRL_C
 
 FLIGHT_SUBJECT = "Your flight to Oslo is confirmed"
 FLIGHT_SENDER = "Fictair <noreply@fictair.example>"
@@ -450,6 +451,7 @@ def test_extract_before_classify_says_what_to_do(workspace):
     assert workspace.ollama.chat_requests() == []
 
 
+@POSIX_ONLY_CTRL_C
 def test_interrupted_extract_resumes_without_resending(workspace):
     subjects = [f"Invented itinerary number {i}" for i in range(6)]
     mbox = write_mbox(workspace.root / "mail.mbox", [email(s, FLIGHT_BODY) for s in subjects])

@@ -6,11 +6,11 @@ Ollama. Every email, person, booking and flight here is invented."""
 from __future__ import annotations
 
 import re
-import signal
 import threading
 
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import FLIGHT_BODY, email, write_mbox
+from stop_signals import ask_to_stop
 from test_audit import AUDIT_HEADER, NO_FLIGHT, flight_record
 from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT, header, read_csv
 
@@ -304,7 +304,7 @@ def spread_mailbox(workspace):
 
 
 def stop_on_chat(workspace, mbox, number: int, *args: str):
-    """Start a Thorough run, send SIGTERM while its ``number``th extraction
+    """Start a Thorough run, ask it to stop while its ``number``th extraction
     request is in progress, then let that request be answered."""
     reached = threading.Event()
     release = threading.Event()
@@ -318,7 +318,7 @@ def stop_on_chat(workspace, mbox, number: int, *args: str):
     proc = workspace.start("run", "--mailbox", str(mbox), "--thoroughness", "thorough", *args)
     try:
         assert reached.wait(timeout=30), f"run never sent extraction request {number}"
-        proc.send_signal(signal.SIGTERM)
+        ask_to_stop(proc)
         release.set()
         stdout, stderr = proc.communicate(timeout=30)
     finally:

@@ -8,10 +8,16 @@ application's screens themselves are verified by hand (see docs/manual-checks.md
 from __future__ import annotations
 
 import os
-import pty
 import subprocess
 import sys
 import threading
+
+import pytest
+
+if sys.platform != "win32":
+    import pty  # POSIX only: Windows has no pseudo-terminals to open this way
+
+needs_pty = pytest.mark.skipif(sys.platform == "win32", reason="opening a pseudo-terminal needs POSIX")
 
 NOT_A_TERMINAL = (
     "error: the application opens only in a terminal (input and output both a terminal); "
@@ -41,7 +47,7 @@ def _run_with_one_terminal_end(workspace, *, terminal: str) -> tuple[int, str]:
             stdin=terminal_end if terminal == "stdin" else subprocess.DEVNULL,
             stdout=terminal_end if terminal == "stdout" else subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
         )
         os.close(terminal_end)
         terminal_end = -1
@@ -63,10 +69,12 @@ def _drain(descriptor: int) -> None:
         pass
 
 
+@needs_pty
 def test_the_bare_command_needs_input_to_be_a_terminal_too(workspace):
     assert _run_with_one_terminal_end(workspace, terminal="stdout") == (2, NOT_A_TERMINAL)
 
 
+@needs_pty
 def test_the_bare_command_needs_output_to_be_a_terminal_too(workspace):
     assert _run_with_one_terminal_end(workspace, terminal="stdin") == (2, NOT_A_TERMINAL)
 
@@ -79,7 +87,7 @@ def test_the_subcommands_do_not_load_the_application(workspace):
         cwd=workspace.root,
         env=workspace.env(),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert "store not found" in proc.stderr

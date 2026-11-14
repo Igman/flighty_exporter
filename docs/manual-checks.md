@@ -289,11 +289,13 @@ From the review press `e`. Compare with `fe export --from-store --dry-run`.
    adding by hand: every kept flight goes in the import file."
 3. **Export.** `e` (or Enter): "Writing the files…", then "Export written".
    The "Import file" panel shows the full path on its own line(s), broken
-   after a `/` (fix h), "Press o to show it in Finder.", and "Manual-add
+   after a `/` (`\` on Windows) (fix h), "Press o to show it in Finder."
+   ("in File Explorer." on Windows), and "Manual-add
    list:" with its path on the next line. The "Importing into Flighty"
    panel lists the steps and the caveat. The import file holds as many
    flights as the plan said; `fe session` lists both files.
-4. **Reveal.** `o` opens Finder with the import file selected (macOS).
+4. **Reveal.** `o` opens Finder (macOS) or File Explorer (Windows) with the
+   import file selected.
 5. **Tick.** Space on a manual-add flight: `[x]`, the count goes up, and
    `manual-add.csv` has `done` = `yes` at once, without a new export (the
    import file's time is unchanged). Space again unticks.

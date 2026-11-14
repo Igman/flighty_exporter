@@ -263,7 +263,7 @@ def test_invalid_cut_off_is_a_config_error(workspace, value):
 
 def test_without_reference_data_the_table_is_written_without_code_checks(workspace):
     absent = workspace.root / "no-openflights"
-    configure(workspace, f'\n[export]\ndata_dir = "{absent}"\ndata_url = "{unreachable_url()}"\n')
+    configure(workspace, f'\n[export]\ndata_dir = "{absent.as_posix()}"\ndata_url = "{unreachable_url()}"\n')
     review, rows = run(workspace, [
         booking("Unknown airport", seg("2025-06-01", "ZZ1", "LIS", "XQX", confidence=0.9)),
         booking("Unknown airline", seg("2025-06-02", "Q92", "LIS", "OSL", confidence=0.9)),
@@ -286,7 +286,7 @@ def test_without_reference_data_the_table_is_written_without_code_checks(workspa
 
 
 def test_reference_data_is_not_needed_when_there_are_no_flights(workspace):
-    configure(workspace, f'\n[export]\ndata_dir = "{workspace.root / "absent"}"\ndata_url = "{unreachable_url()}"\n')
+    configure(workspace, f'\n[export]\ndata_dir = "{(workspace.root / "absent").as_posix()}"\ndata_url = "{unreachable_url()}"\n')
     review, rows = run(workspace, [Mail("Newsletter", "01", "marketing", record("other", None))])
 
     assert rows == []

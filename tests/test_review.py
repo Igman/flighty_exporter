@@ -3,6 +3,10 @@ Every email, person and flight here is invented."""
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import FLIGHT_BODY, email, write_mbox
 from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT, read_csv
@@ -127,3 +131,22 @@ def test_review_without_a_store_is_a_clear_error(workspace):
     assert result.returncode != 0
     assert "store" in result.stderr.lower()
     assert not (workspace.root / "review.csv").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses to replace a file another program has open")
+def test_review_table_open_in_another_program_is_a_clear_error(workspace):
+    # A spreadsheet holding the table open, as Excel does on Windows.
+    extracted_workspace(workspace)
+    review_csv = workspace.root / "review.csv"
+    assert workspace.run("review").returncode == 0
+    before = review_csv.read_bytes()
+
+    with review_csv.open("rb"):
+        result = workspace.run("review")
+
+    assert result.returncode == 1
+    assert f"cannot write {review_csv}: it may be open in another program" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert review_csv.read_bytes() == before
+    assert not (workspace.root / "review.csv.tmp").exists()
+    assert workspace.run("review").returncode == 0  # closed again: written as usual

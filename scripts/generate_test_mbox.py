@@ -383,7 +383,7 @@ def main():
 
     cache = {}
     if args.cache and os.path.exists(args.cache):
-        with open(args.cache) as fh:
+        with open(args.cache, encoding="utf-8") as fh:
             cache = json.load(fh)
 
     start = time.time()
@@ -393,13 +393,14 @@ def main():
             subject, body = write_email(args.model, item)
             cache[mid] = [subject, body]
             if args.cache:
-                with open(args.cache, "w") as fh:
+                with open(args.cache, "w", encoding="utf-8") as fh:
                     json.dump(cache, fh)
         print("[%3d/%d] %-18s %s" % (n, len(plan), item["category"], cache[mid][0][:70]),
               flush=True)
 
     if os.path.exists(args.out):
         os.remove(args.out)
+    mailbox.linesep = b"\n"  # LF on every system, as on macOS and Linux (not CRLF on Windows)
     box = mailbox.mbox(args.out)
     truth = []
     for item in plan:
@@ -419,7 +420,7 @@ def main():
                                destination=s["dest"]) for s in f["segments"]]))
     box.flush()
     box.close()
-    with open(args.out + ".truth.json", "w") as fh:
+    with open(args.out + ".truth.json", "w", encoding="utf-8", newline="\n") as fh:
         json.dump(dict(owner=dict(name=OWNER_NAME, address=OWNER_ADDR), model=args.model,
                        total_messages=len(plan), flight_messages=truth), fh, indent=2)
     print("wrote %s (%d messages, %d flight) in %.0fs" % (
