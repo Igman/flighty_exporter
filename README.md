@@ -66,7 +66,7 @@ private and never commit them:
 | File | Written by | Default name |
 | --- | --- | --- |
 | Your config (paths, name variants) | you | `flighty_exporter.toml` |
-| The store: every pass's results and your review decisions (SQLite) | `classify`, `extract`, `audit`, `export`, `mark-added` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
+| The store: every pass's results, the text of the emails flights came from, and your review decisions (SQLite) | `classify`, `extract`, `audit`, `export`, `mark-added` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
 | The review table | `review` | `review.csv` |
 | The failures file | `review` | `failures.csv` |
 | The audit table | `audit` | `audit.csv` |
@@ -249,6 +249,13 @@ invalid or cut-off answer is retried (`[extract] retries`, default 2) and then
 recorded as a failure. Failed messages are tried again the next time you run
 `extract`.
 
+`extract` (and `audit`) read only the messages they send: `classify` records
+where each message sits in the mbox file, and they go straight there instead
+of reading the whole mailbox again. If the mbox file has changed since
+`classify` (a new export), or the store was made by an earlier version, they
+first scan the mailbox's headers once to find the messages again (shown as
+`extract: locating messages`) and remember what they found.
+
 The summary lists how many messages were selected (`selected (gate >= 0.05)`),
 extracted, already extracted, retried, failed, not found in the mailbox, cut at
 the input limit (`inputs truncated`) and PDFs that could not be read, and then
@@ -410,6 +417,28 @@ up in Gmail and, if they are flights, add by hand.
 it overwrites the table only if you have not changed it since; if you have
 edited it, it stops with an error rather than lose your edits. Use
 `--force` to overwrite it anyway, or `--output FILE` to write elsewhere.
+
+**Reading a flight's emails.** `extract` (and `classify`, for messages with
+machine-readable flight data) saves in the store the text of every email that
+yielded a flight record: sender, subject, date, the cleaned body and the text
+of readable PDF attachments. Only those emails, never the whole mailbox. To
+check a flight against its emails, without the mbox file:
+
+```
+uv run flighty-exporter sources                                 # every flight review lists
+uv run flighty-exporter sources --flight 2025-05-12 ZZ1234      # one flight
+uv run flighty-exporter sources --flight 2025-05-12 ZZ1234 --no-text   # just its emails' dates and subjects
+```
+
+It prints each flight (date, flight number, route), then each source email's
+date and subject followed by its saved text. The flights are the ones `review`
+would write, with your saved decisions applied, so a corrected flight is shown
+(and picked with `--flight`) under its corrected values; `sources` only reads
+the store and never discards a decision. For a flight with no flight
+number, give its route instead (`--flight 2025-05-12 LIS-OSL`). Flights
+extracted by an earlier version of the tool show
+`source text unavailable (extracted before text was saved)`; extracting them
+again (for example with another extraction model) saves the text.
 
 ### 5. Edit the review table
 
@@ -679,7 +708,9 @@ Other messages:
 **A store from an older version** of the tool is upgraded automatically the
 first time a command opens it; nothing needs to be redone. (A store written by
 a version that did not record PDF attachments has them filled in by the next
-`audit`, with one extra scan of the mailbox.)
+`audit`, with one extra scan of the mailbox. One written before message
+positions were recorded has them found by the next `extract` or `audit`, with
+one scan of the mailbox's headers.)
 
 **Forcing reclassification.** Results are stored per model name, so changing
 `[models] decision` (or `extraction`) makes the next run classify (or extract)
@@ -723,7 +754,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, and `connection` (the shared HTTP opener and the errors that stop a pass). |
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
-| `output/` | What the user gets at the end: `review`, `export`, and `openflights` (the import file format and reference data). |
+| `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
 
 The dependency rule, enforced by `tests/test_layout.py`:

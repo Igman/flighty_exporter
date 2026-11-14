@@ -5,11 +5,17 @@ resolved from their own machine-readable data at classify time are never
 selected (see ``markup``).
 
 A separate command from classify, so the two models are never needed at once.
-Message bodies are read by scanning the mbox again and picking out the
-selected identifiers (messages sharing a Message-ID are treated as one). The
-text layer of PDF attachments is read here (never at classify time). A PDF
+Each selected message is read directly at the position classify recorded for
+it, after checking that the message there still has its identifier; no other
+message is read (messages sharing a Message-ID are treated as one: the first
+readable one counts). When a position is missing (a store from before
+positions were recorded) or no longer matches (the mailbox file changed), the
+mailbox is scanned once, reading only headers, and the positions found are
+recorded for every message the store holds, so the scan is not repeated.
+Messages are extracted in mailbox order. The text layer of PDF attachments is read here (never at classify time). A PDF
 that cannot be read is recorded as an attachment note for the failures file;
-it does not make the message fail.
+it does not make the message fail. The text of each message that yields a
+record is saved with it (``Message.full_text``), for review.
 """
 
 from __future__ import annotations
@@ -84,15 +90,15 @@ def extract_messages(
     mbox = Mailbox(mailbox_path, read_pdfs=True)
     progress = Progress(len(pending), label, progress_stream)
     try:
-        for entry in mbox:
-            if not isinstance(entry, Message) or entry.identifier not in pending:
+        positions = _locate(mbox, pending, store, label, progress_stream)
+        for identifier, position in sorted(positions.items(), key=lambda item: item[1]):
+            entry = mbox.entry_at(position)
+            if not isinstance(entry, Message) or entry.identifier != identifier:
                 continue
-            pending.discard(entry.identifier)
+            pending.discard(identifier)
             started = time.monotonic()
             _extract_one(entry, store, client, summary)
             progress.advance(time.monotonic() - started)
-            if not pending:
-                break
         for identifier in sorted(pending):
             store.record_failure(identifier, PASS_NAME, NOT_IN_MAILBOX)
             summary.not_in_mailbox += 1
@@ -107,6 +113,35 @@ def extract_messages(
         mbox.close()
 
 
+def _locate(
+    mbox: Mailbox, wanted: set[str], store: Store, label: str, progress_stream: TextIO | None
+) -> dict[str, int]:
+    """The position of each ``wanted`` message that is in the mailbox. A
+    recorded position is used if the message there has the identifier;
+    otherwise the mailbox's headers are scanned once and every position
+    found is recorded."""
+    recorded = store.message_positions(wanted)
+    found = {
+        identifier: position
+        for identifier, position in recorded.items()
+        if position is not None and mbox.identifier_at(position) == identifier
+    }
+    if len(found) == len(wanted):
+        return found
+    scanned: dict[str, int] = {}
+    progress = Progress(len(mbox), f"{label}: locating messages", progress_stream)
+    try:
+        for position, identifier in mbox.identifiers():
+            if identifier is not None:
+                scanned.setdefault(identifier, position)
+            progress.advance()
+    finally:
+        progress.finish()
+    store.record_positions(scanned)
+    found.update({identifier: scanned[identifier] for identifier in wanted - found.keys() if identifier in scanned})
+    return found
+
+
 def _extract_one(message: Message, store: Store, client: ExtractionClient, summary: ExtractSummary) -> None:
     store.replace_attachment_notes(message.identifier, message.attachment_notes)
     summary.pdfs_not_read += len(message.attachment_notes)
@@ -119,6 +154,7 @@ def _extract_one(message: Message, store: Store, client: ExtractionClient, summa
         summary.failures.append((message.identifier, str(exc)))
         return
     store.save_extraction(message.identifier, extraction)
+    store.save_message_text(message.identifier, message.full_text())
     summary.extracted += 1
     summary.retries += extraction.attempts - 1
     summary.inputs_truncated += extraction.input_truncated

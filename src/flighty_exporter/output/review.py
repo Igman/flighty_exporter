@@ -25,7 +25,8 @@ other passengers, so the user can check them without the table.
 The saved review decisions (see ``flights.decisions``) are applied on top:
 corrections before the checks, so reasons and pre-set keep are recomputed
 from the corrected values, and a keep override after them. ``build_flight_list``
-builds this flight list for review, export and the terminal application. The
+builds this flight list for review, export, sources and the terminal
+application. The
 last column, flight_id, names the flight as consolidation produced it, so an
 edited row can be matched to its flight. Writing the table discards the
 decisions whose flight is no longer produced and counts them in the summary.
@@ -133,7 +134,7 @@ class ReviewSummary:
 
 @dataclass
 class FlightList:
-    """The flights for review and export, with what consolidation left beside them."""
+    """The flights for review, export and sources, with what consolidation left beside them."""
 
     flights: list[ReviewedFlight]  # decisions applied; in review table order
     consolidation: Consolidation

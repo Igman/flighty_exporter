@@ -172,9 +172,7 @@ def build_request(model: str, text: str, num_ctx: int, num_predict: int) -> dict
 def email_text(message: Message, max_chars: int = DEFAULT_MAX_INPUT_CHARS) -> tuple[str, bool]:
     """The user message and whether it was cut at ``max_chars``: sender,
     subject, date, the whole cleaned body, then each PDF attachment's text."""
-    text = f"From: {message.sender}\nSubject: {message.subject}\nDate: {message.date}\n\n{message.body}"
-    for attachment in message.pdf_texts:
-        text += f"\n\n----- PDF attachment: {attachment.filename} -----\n{attachment.text}"
+    text = message.full_text()
     if len(text) <= max_chars:
         return text, False
     return text[:max_chars].rstrip() + "\n" + TRUNCATION_NOTE, True
