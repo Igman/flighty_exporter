@@ -49,3 +49,10 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Agent tooling installed per machine: never commit.
+# Installed skills (third-party copies; skills-lock.json records which ones)
+# and the symlinks to them, plus machine-local agent settings.
+.agents/
+.claude/skills/
+.claude/settings.local.json
