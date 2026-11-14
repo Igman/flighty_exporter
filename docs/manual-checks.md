@@ -110,9 +110,10 @@ scratch.
     "nothing to do", the progress panel is gone, and a Report panel shows the
     same end-of-run report `uv run flighty-exporter run` prints (flights
     found, needing attention, cancelled, replaced, dropped, failed messages,
-    files written, next step), followed by a line saying review happens in
-    the next screen once it exists. The footer offers only `q Quit`; `q`
-    exits with status `0`.
+    files written, next step), followed by "Press enter to review the
+    flights, or q to quit.". The footer offers `⏎ Review flights` and
+    `q Quit`; `q` exits with status `0` (`enter` is covered under "Review
+    screen" below).
 13. **No mailbox.** Remove `mailbox` from the config (or point it at a file
     that does not exist) and launch. A screen says guided setup is not
     available yet, why (no mailbox set, or the file not found), the config
@@ -125,6 +126,95 @@ scratch.
     during a run. Text wraps inside the panels, nothing is cut off sideways,
     and the screen scrolls (mouse wheel, or the keyboard) to reach the panels
     below; the footer stays visible.
+
+## Review screen
+
+Start from a finished run of `test.mbox` (see the progress screen's step
+12). With `names = ["Jordan Ellis"]` some bookings are dropped as other
+passengers'; for an unreadable email, and for a flight with several source
+emails, look at the end-of-run report's counts and the `flights` command's
+output (`uv run flighty-exporter flights`), which lists the same flights in
+the same order.
+
+1. **Opens only after a complete run.** Launch and press `p` during
+   classify: the footer offers no review key, and `enter` does nothing.
+   Make Ollama unreachable and launch: with the Problem panel showing,
+   `enter` does nothing. Let a run finish: the footer offers
+   `⏎ Review flights`; press `enter`. The review screen replaces the
+   progress screen.
+2. **Table, order and totals.** The table has the columns date, flight,
+   route, airline, booking, evidence, keep, corrected, reasons. Flights with
+   a blocking reason (reasons in red, e.g. "unknown airport", "low
+   confidence") come first, then flights with only advisory reasons (in
+   yellow, e.g. "no flight number"), then the rest, each group by date. The
+   first line shows "Flights: N · kept K · not kept M · needing attention
+   A", the same numbers `flights` prints; the second shows "Showing: all
+   flights (N of N flights)".
+3. **Detail panel.** Move with the arrow keys: the panel below follows the
+   cursor and shows every field, "keep: no (pre-set)" or "yes (pre-set)",
+   each attention reason with "(blocking)" or "(advisory)", and "source
+   emails: N" with each email's date and subject. A flight confirmed by a
+   check-in shows two or more source emails.
+4. **Toggle keep.** On a flight pre-set to not keep, press space: its keep
+   cell reads "yes" at once, the totals' kept count goes up by one, the
+   cursor stays on the same flight, and the detail says "yes (your choice;
+   pre-set no)". Press `k`: back to "no (pre-set)". In another terminal,
+   `uv run flighty-exporter flights` shows the same keep after each press
+   (saved immediately).
+5. **Source emails.** Press `enter` on a flight with two source emails: a
+   view lists "[1/2]" and "[2/2]" with each email's date and subject,
+   followed by its saved text (From, Subject, Date, the body, any PDF
+   text); it scrolls with the arrow keys or the mouse. A flight extracted by
+   an older version shows "source text unavailable (extracted before text
+   was saved)" under its subject. `escape` returns to the table with the
+   same flight selected. This works with the mbox file moved away.
+6. **Correct a flight.** On a flight flagged "unknown airport", press `c`:
+   a form shows the date, flight number, origin and destination prefilled.
+   Type an impossible date (2025-02-30) and press `enter`: the form stays
+   open with "date '2025-02-30' is not a real YYYY-MM-DD date; nothing was
+   saved." Empty the origin and press `enter`: "origin is empty". Put back
+   a real date and type a known airport in lower case for the wrong code,
+   press `enter`: the form closes, the row shows the upper-cased code,
+   "corrected", no reasons, keep "yes", and it has moved down out of the
+   flagged group with the cursor still on it. The detail lists
+   "corrections (found -> corrected):" with the old and new code. Correct
+   a good flight's origin to an unknown code (e.g. XQY): it moves up into
+   the flagged group with "unknown airport XQY" and keep "no". Press `c`
+   and `escape`: nothing changes.
+7. **Clear a decision.** On a flight you toggled but did not correct, press
+   `u`: it returns to its pre-set keep without asking. On a corrected
+   flight, press `u`: a box asks to clear the decision, naming the
+   corrections; `n` (or `escape`) keeps it, `y` puts the found values back.
+8. **Filters.** Press `f`: only flights with reasons are shown and the
+   second line reads "Showing: flagged only (A of N flights)". Press `n`:
+   "flagged only, not kept only". Press `y` repeatedly: it steps through
+   each year present, oldest first, then back to all years; a combination
+   that matches nothing says "No flights match these filters.". With the
+   not-kept filter on, press space on a flight: it is kept and leaves the
+   table, the cursor moving to the next flight. `f` and `n` again turn the
+   filters off. The totals line never changes with the filters.
+9. **Dropped bookings and unreadable emails.** Press `d`: a list headed
+   "Bookings dropped as other passengers': N", one line per booking
+   (reference, passengers, flights, first date); `escape` returns. Press
+   `x`: "Emails that could not be read: N", one line per email (date,
+   sender, subject, reason); `escape` returns.
+10. **Export.** Press `e`: until the export screen exists, a notice says
+    "export is not available yet"; once it does, the export screen opens,
+    and coming back from it shows the review again with your decisions.
+11. **Saved across sessions.** Make a keep change and a correction, press
+    `q` (the application exits with status `0`), and launch again: once the
+    run has finished (stages read "nothing to do"), press `enter`. The same
+    flights show the same keep values and corrections. `uv run
+    flighty-exporter review --store check.db --force` writes a table with
+    them, and `export --from-store` exports them.
+12. **No flights.** Use a mailbox with no flight emails (or one whose only
+    flight email cannot be read): the review shows "No flights found.",
+    where to look (the emails that could not be read, with their count and
+    `x` to list them) and, for a Quick run, that a Thorough run exists,
+    instead of an empty table. The footer offers only `d`, `x`, `e` and `q`.
+13. **Many flights.** With a store of a few thousand flights, the screen
+    opens within a second or so, and space on one flight updates its row
+    without a visible pause.
 
 ## Export screen
 

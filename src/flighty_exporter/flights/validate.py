@@ -69,6 +69,10 @@ REASON_KINDS = (
     INPUT_TRUNCATED,
 )
 
+# The reason kinds that pre-set a flight to not keep (checks 1 to 6); every
+# other reason, consolidation's included, is advisory.
+BLOCKING_KINDS = frozenset(REASON_KINDS[:6])
+
 EARLIEST_PLAUSIBLE_DATE = date(1990, 1, 1)
 MAX_DAYS_AFTER_MESSAGE = 400
 CONFIDENCE_PENALTY = 0.5
@@ -121,6 +125,11 @@ def reason_kind(reason: str) -> str:
         if reason.startswith(kind + " "):
             return kind
     return reason
+
+
+def is_blocking(reason: str) -> bool:
+    """Whether an attention reason pre-sets its flight to not keep."""
+    return reason_kind(reason) in BLOCKING_KINDS
 
 
 def _check(flight: Flight, reference: CodeLookup | None, min_confidence: float) -> Flight:

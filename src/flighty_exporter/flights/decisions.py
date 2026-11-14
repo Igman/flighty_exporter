@@ -18,6 +18,14 @@ the corrected flights are then checked (``validate.check_flights``) so their
 attention reasons and pre-set keep are recomputed from the corrected values;
 finally a keep override replaces the pre-set keep. Decisions whose key names
 no flight are returned so the caller can discard them.
+
+**Making a decision** from what the user typed or chose, the same for the
+spreadsheet route and the review screen: ``typed_corrections`` normalises
+the four fields as consolidation does, rejects an unreal date or an empty
+airport (``InvalidCorrection``), and keeps only the fields that differ from
+the flight as consolidation produced it (a value typed back to the original
+is no correction); ``keep_override`` is a keep value as an override, None
+when it equals the pre-set keep (so no override is saved).
 """
 
 from __future__ import annotations
@@ -81,6 +89,46 @@ def is_date(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+class InvalidCorrection(ValueError):
+    """A typed correction that cannot be saved; the message says why."""
+
+
+@dataclass(frozen=True)
+class Corrections:
+    """The corrections to save for a flight: None for a field that is not corrected."""
+
+    date: str | None = None
+    flight_number: str | None = None
+    origin: str | None = None
+    destination: str | None = None
+
+
+def typed_corrections(original: Segment, day: str, flight_number: str, origin: str, destination: str) -> Corrections:
+    """The corrections the typed values make to ``original`` (the segment as
+    consolidation produced it). Raises ``InvalidCorrection`` for a date that
+    is not a real ``YYYY-MM-DD`` date or an empty origin or destination."""
+    day = day.strip()
+    if not is_date(day):
+        raise InvalidCorrection(f"date {day!r} is not a real YYYY-MM-DD date")
+    number = normalise_flight_number(flight_number)
+    origin, destination = normalise_airport(origin), normalise_airport(destination)
+    if not origin:
+        raise InvalidCorrection("origin is empty: give the airport code")
+    if not destination:
+        raise InvalidCorrection("destination is empty: give the airport code")
+    return Corrections(
+        date=day if day != original.date else None,
+        flight_number=number if number != original.flight_number else None,
+        origin=origin if origin != original.origin else None,
+        destination=destination if destination != original.destination else None,
+    )
+
+
+def keep_override(keep: bool, preset_keep: bool) -> bool | None:
+    """``keep`` as a keep override: None when it is the pre-set value."""
+    return None if keep == preset_keep else keep
 
 
 def correct(segment: Segment, decision: ReviewDecision | None) -> Segment:

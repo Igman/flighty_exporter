@@ -66,7 +66,7 @@ private and never commit them:
 | File | Written by | Default name |
 | --- | --- | --- |
 | Your config (paths, name variants) | you | `flighty_exporter.toml` |
-| The store: every pass's results, the text of the emails flights came from, and your review decisions (SQLite) | `classify`, `extract`, `audit`, `run`, `export`, `mark-added` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
+| The store: every pass's results, the text of the emails flights came from, and your review decisions (SQLite) | `classify`, `extract`, `audit`, `run`, `export`, `mark-added`, `decide`, the application | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
 | The review table | `review`, `run` | `review.csv` |
 | The failures file | `review`, `run` | `failures.csv` |
 | The audit table | `audit` | `audit.csv` |
@@ -232,6 +232,27 @@ local files.
 
 Outside a terminal (piped, or run from a script), the bare command prints the
 usage line and exits with status 2, as before.
+
+**Reviewing in the application.** When the run has finished, press `enter`
+to review the flights (only a complete run is reviewed: not after a pause or
+a problem). The review screen shows a table of flights (date, flight number,
+route, airline, booking reference, evidence, keep, whether you corrected it,
+and its attention reasons), flights needing attention first; the totals
+(flights, kept, not kept, needing attention) and the active filters above
+it; and below it the selected flight in full: its keep and whether that is
+the pre-set value or your choice, each attention reason marked blocking or
+advisory, any correction next to the value the tool found, and its source
+emails. Keys: space (or `k`) keeps or drops the selected flight; `enter`
+shows the saved text of its source emails; `c` corrects its date, flight
+number, origin or destination (checked like any other flight; `enter`
+saves, `escape` cancels); `u` clears your decision on it; `f` shows only
+flagged flights, `n` only flights not kept, `y` steps through the years;
+`d` lists the bookings dropped as other passengers', `x` the emails that
+could not be read; `e` moves on to export; `q` quits. Every decision is
+saved in the store the moment you make it, so it is there when you come
+back, and `review` and `export` use it too. The `flights` and `decide`
+commands (see [4. review](#4-review)) show and make the same decisions from
+the command line.
 
 ### All in one go: run
 
@@ -567,6 +588,32 @@ extracted by an earlier version of the tool show
 `source text unavailable (extracted before text was saved)`; extracting them
 again (for example with another extraction model) saves the text.
 
+**The flight list and single decisions from the command line.** `flights`
+prints the flights as the application's review screen shows them: the
+totals, the years present, a table with flights needing attention first
+(blocking reasons before advisory ones, then by date and flight number),
+then the bookings dropped as other passengers' and the emails that could not
+be read. `decide` makes one decision, saves it in the store at once and
+prints the flight's new state. Pick the flight by the date and flight number
+it now shows (or `--route ORIGIN DEST` for a flight without a number), as
+for `mark-added`:
+
+```
+uv run flighty-exporter flights                       # every flight
+uv run flighty-exporter flights --flagged --year 2025 # filters combine; also --not-kept
+uv run flighty-exporter decide 2025-06-01 QQ410 --drop   # or --keep
+uv run flighty-exporter decide 2025-07-01 ZZ300 --set destination=OSL --set date=2025-07-02
+uv run flighty-exporter decide 2025-07-02 ZZ300 --reset  # clear the keep choice and corrections
+```
+
+A keep choice equal to the pre-set value saves nothing (and removes an
+earlier choice). `--set` takes `date`, `flight_number`, `origin` or
+`destination`; codes are upper-cased and flight numbers lose spaces and
+hyphens, a value equal to what the tool found removes that correction, and
+an unreal date or an empty airport is refused without saving anything. A
+following `review --force` or `export --from-store` uses what `decide`
+saved.
+
 ### 5. Edit the review table
 
 Open `review.csv` in a spreadsheet (Numbers, Excel, LibreOffice). For each row:
@@ -895,7 +942,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, and `connection` (the shared HTTP opener and the errors that stop a pass). |
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
-| `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
+| `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `flight_view` (the flight list as the review screen and `flights` show it), `decide` (one review decision at a time), `export`, and `openflights` (the import file format and reference data). |
 | `app/` | The full-screen application the bare command opens (Textual): `shell` (the application and moving between screens), `runner` (runs the engine on a thread and turns its events into messages) and `screens/` (one module per screen). Draws what the engine reports; no pipeline logic. |
 | `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), `thorough` (what a Thorough run does after its audit), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, `tables` (CSV writing and message dates shared by audit, review and export), and `threshold` (the session's effective threshold). |

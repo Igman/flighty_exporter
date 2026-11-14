@@ -37,12 +37,12 @@ from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, r
 from .engine.report import format_report
 from .engine.events import AUDIT, INCLUDE, STOPPED
 from .engine.thorough import format_include
-from .flights.decisions import is_date, resolve_key
+from .flights.decisions import InvalidCorrection, is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
 from .ollama.extraction import ExtractionClient
-from .output import export, review, sources
+from .output import decide, export, flight_view, review, sources
 from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
@@ -419,6 +419,107 @@ COMMANDS["sources"] = (
     "list each flight review would list with its source emails and their saved text (needs only the store)",
     _sources_arguments,
     cmd_sources,
+)
+
+
+def cmd_flights(args: argparse.Namespace, config: Config) -> int:
+    if args.year is not None and not (len(args.year) == 4 and args.year.isdigit()):
+        raise UsageError(f"--year {args.year!r} is not a year (YYYY)")
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    filters = flight_view.Filters(flagged=args.flagged, not_kept=args.not_kept, year=args.year)
+    with Store(store_path) as store:
+        flight_list = review.build_flight_list(config, store)
+    print(flight_view.format_flights(flight_list, filters, config.thoroughness))
+    return EXIT_OK
+
+
+def _flights_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    parser.add_argument("--flagged", action="store_true", help="only flights needing attention")
+    parser.add_argument("--not-kept", action="store_true", help="only flights not kept")
+    parser.add_argument("--year", metavar="YYYY", help="only flights in this year")
+
+
+COMMANDS["flights"] = (
+    "list the flights as the review screen shows them (flights needing attention first), with the totals, "
+    "the bookings dropped as other passengers' and the emails that could not be read (reads only)",
+    _flights_arguments,
+    cmd_flights,
+)
+
+
+CORRECTABLE = ("date", "flight_number", "origin", "destination")
+
+
+def cmd_decide(args: argparse.Namespace, config: Config) -> int:
+    if bool(args.flight_number) == bool(args.route):
+        raise UsageError("give the flight number, or --route ORIGIN DEST for a flight without one (not both)")
+    typed: dict[str, str] = {}
+    for item in args.set or ():
+        name, sep, value = item.partition("=")
+        if not sep or name.strip() not in CORRECTABLE:
+            raise UsageError(
+                f"--set {item!r}: give field=value, the field being date, flight_number, origin or destination"
+            )
+        typed[name.strip()] = value
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    origin, destination = args.route or ("", "")
+    with Store(store_path) as store:
+        reviewer = decide.Reviewer.load(config, store)
+        try:
+            key = reviewer.find(args.date, args.flight_number or "", origin, destination).key
+        except decide.FlightNotFound as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        if args.keep or args.drop:
+            reviewed = reviewer.set_keep(store, key, args.keep)
+        elif args.reset:
+            reviewed = reviewer.reset(store, key)
+        else:
+            segment = reviewer.get(key).flight.segment
+            # A field not given keeps the value it now shows.
+            values = [typed.get(name, getattr(segment, name)) for name in CORRECTABLE]
+            try:
+                reviewed = reviewer.correct(store, key, *values)
+            except InvalidCorrection as exc:
+                print(f"error: {exc}; nothing was saved", file=sys.stderr)
+                return EXIT_ERROR
+        session.touch(store)
+    print("\n".join(flight_view.detail_lines(reviewed)))
+    return EXIT_OK
+
+
+def _decide_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("date", help="the flight's date, YYYY-MM-DD, as it now shows (after any correction)")
+    parser.add_argument("flight_number", nargs="?", help="the flight number, as it now shows")
+    parser.add_argument(
+        "--route", nargs=2, metavar=("ORIGIN", "DEST"), help="origin and destination, for a flight without a number"
+    )
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--keep", action="store_true", help="keep the flight")
+    action.add_argument("--drop", action="store_true", help="do not keep the flight")
+    action.add_argument("--reset", action="store_true", help="clear the flight's keep choice and corrections")
+    action.add_argument(
+        "--set",
+        action="append",
+        metavar="FIELD=VALUE",
+        help="correct date, flight_number, origin or destination (repeat for several fields); "
+        "a value equal to what the tool found clears that correction",
+    )
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+
+
+COMMANDS["decide"] = (
+    "make one review decision, as the review screen does: keep or drop a flight, correct its date, flight "
+    "number, origin or destination, or clear its decision; saved at once, then the flight's new state is printed",
+    _decide_arguments,
+    cmd_decide,
 )
 
 
