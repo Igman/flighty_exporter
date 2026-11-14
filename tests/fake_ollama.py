@@ -110,6 +110,10 @@ class FakeOllama:
     version_raw_body: str | None = None
     models: list[str] = field(default_factory=lambda: list(DEFAULT_MODELS))
     tags_status: int = 200
+    # When set, every request is received and recorded but its connection is
+    # closed without an answer, as when the server goes away mid-pass. Set it
+    # from ``on_request`` to drop the request being handled.
+    unreachable: bool = False
 
     def __post_init__(self) -> None:
         self.routes: dict[tuple[str, str], Callable[[Any], tuple[int, str]]] = {
@@ -146,6 +150,9 @@ class FakeOllama:
                     fake.requests.append(request)
                 if fake.on_request is not None:
                     fake.on_request(request)
+                if fake.unreachable:
+                    self.close_connection = True
+                    return
                 route = fake.routes.get((method, self.path))
                 if route is None:
                     status, payload = 404, json.dumps({"error": "not found"})

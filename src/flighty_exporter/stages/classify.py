@@ -42,6 +42,8 @@ class ClassifySummary:
     failed: int = 0
     failures: list[tuple[str, str]] = field(default_factory=list)
     interrupted: bool = False
+    # Ended early for another reason (server unreachable, a stop requested).
+    stopped: bool = False
 
 
 def run_classify(
@@ -85,6 +87,7 @@ def run_classify(
                 progress.advance(time.monotonic() - started)
     except BaseException as exc:
         summary.interrupted = isinstance(exc, KeyboardInterrupt)
+        summary.stopped = not summary.interrupted
         exc.summary = summary  # type: ignore[attr-defined]
         raise
     finally:
@@ -124,7 +127,12 @@ def _classify_one(message: Message, store: Store, client: DecisionClient, summar
 def format_summary(summary: ClassifySummary, config: Config, store: Store) -> str:
     """The printed summary: this run's counts, then what the store holds for
     the configured decision model (so a rerun still shows the results)."""
-    lines = ["Classify pass interrupted. Rerun to resume." if summary.interrupted else "Classify pass finished."]
+    if summary.interrupted:
+        lines = ["Classify pass interrupted. Rerun to resume."]
+    elif summary.stopped:
+        lines = ["Classify pass stopped. Rerun to resume."]
+    else:
+        lines = ["Classify pass finished."]
     lines += [
         f"  messages in mailbox:  {summary.total}",
         f"  classified:           {summary.classified}",

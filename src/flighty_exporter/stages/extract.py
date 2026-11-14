@@ -43,6 +43,8 @@ class ExtractSummary:
     pdfs_not_read: int = 0
     failures: list[tuple[str, str]] = field(default_factory=list)
     interrupted: bool = False
+    # Ended early for another reason (server unreachable, a stop requested).
+    stopped: bool = False
 
 
 def run_extract(
@@ -100,6 +102,7 @@ def extract_messages(
             progress.advance()
     except BaseException as exc:
         summary.interrupted = isinstance(exc, KeyboardInterrupt)
+        summary.stopped = not summary.interrupted
         exc.summary = summary  # type: ignore[attr-defined]
         raise
     finally:
@@ -127,7 +130,12 @@ def _extract_one(message: Message, store: Store, client: ExtractionClient, summa
 def format_summary(summary: ExtractSummary, config: Config, store: Store) -> str:
     """The printed summary: this run's counts, then what the store holds for
     the configured extraction model among the selected messages."""
-    lines = ["Extract pass interrupted. Rerun to resume." if summary.interrupted else "Extract pass finished."]
+    if summary.interrupted:
+        lines = ["Extract pass interrupted. Rerun to resume."]
+    elif summary.stopped:
+        lines = ["Extract pass stopped. Rerun to resume."]
+    else:
+        lines = ["Extract pass finished."]
     lines += [
         f"  selected (gate >= {config.threshold:g}): {summary.selected}",
         f"  extracted:            {summary.extracted}",

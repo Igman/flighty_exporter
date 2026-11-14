@@ -373,3 +373,31 @@ def test_unreachable_ollama_stops_the_run_with_a_clear_message(workspace):
     assert result.returncode != 0
     assert "ollama" in result.stderr.lower()
     assert "127.0.0.1:9" in result.stderr
+
+
+def test_server_going_away_mid_pass_says_the_pass_stopped_with_the_counts_so_far(workspace):
+    subjects = [f"Invented message number {i}" for i in range(5)]
+    mbox = write_mbox(workspace.root / "mail.mbox", [email(s) for s in subjects])
+
+    def vanish_on_third(request):
+        if len(workspace.ollama.decision_requests()) == 3:
+            workspace.ollama.unreachable = True
+
+    workspace.ollama.on_request = vanish_on_third
+    result = workspace.run("classify", "--mailbox", str(mbox))
+
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "Classify pass stopped. Rerun to resume."
+    assert "finished" not in result.stdout
+    assert result.count("messages in mailbox") == 5
+    assert result.count("classified") == 2
+    assert f"error: cannot reach Ollama at {workspace.ollama.url}" in result.stderr
+    assert "Progress so far is saved; rerun classify to resume." in result.stderr
+
+    # A completed pass still says it finished.
+    workspace.ollama.on_request = None
+    workspace.ollama.unreachable = False
+    rerun = workspace.run("classify", "--mailbox", str(mbox))
+    assert rerun.returncode == 0, rerun.stderr
+    assert rerun.stdout.splitlines()[0] == "Classify pass finished."
+    assert rerun.count("already classified") == 2
