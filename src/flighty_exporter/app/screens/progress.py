@@ -30,6 +30,7 @@ from ...engine.events import (
     ADDRESS,
     DONE,
     NOTHING_TO_DO,
+    SKIPPED,
     STOPPED,
     Notice,
     Problem,
@@ -42,6 +43,8 @@ from ...engine.events import (
 )
 from ...engine.pipeline import FINISHED, STOPPED_ON_REQUEST
 from ...engine.report import RunReport, format_report
+from ...engine.thorough import LOWERED, IncludeSummary
+from ...stages.audit import AuditResult
 from ...stages.classify import ClassifySummary
 from ...stages.extract import ExtractSummary
 from ..runner import EngineEvent, EngineRunner, RunEnded, RunInputs
@@ -65,6 +68,7 @@ STATE_MARKS = {
     DONE: ("✓", "green"),
     NOTHING_TO_DO: ("✓", "dim green"),
     STOPPED: ("■", "red"),
+    SKIPPED: ("–", "dim"),
 }
 
 STATUS = {
@@ -77,6 +81,10 @@ STATUS = {
     STUCK: "The run cannot start: see below.",
     FINISHED_VIEW: "Run finished.",
 }
+
+# Summaries whose counts are shown when their stage finishes even if it sent
+# nothing (extract on a relaunch, an audit whose sample was extracted before).
+FINAL_COUNTS = (ClassifySummary, ExtractSummary, AuditResult, IncludeSummary)
 
 RETRY_HINT = "Press r to retry once it is fixed, or q to quit."
 ADDRESS_HINT = "Change [ollama] address in the config file, then start flighty-exporter again. Press q to quit."
@@ -114,8 +122,12 @@ def summary_counts(summary: Any) -> list[str]:
     summary counts this run's work next to what earlier runs had already
     done ("already classified", "already extracted"), so "done so far" is
     their sum. Failures are retried on every run, so the failed count is the
-    messages still failing. Any other summary is shown generically: every
-    numeric field."""
+    messages still failing. At the end of a Thorough run's audit and include
+    stages, their own summaries give the same totals (messages reused from
+    earlier extractions count as extracted); while those stages run, their
+    counts are their extraction summaries, which hold only this run's
+    extractions. Any other summary is shown generically: every numeric
+    field."""
     if isinstance(summary, ClassifySummary):
         return [
             f"classified {summary.classified + summary.already_classified:,}",
@@ -129,6 +141,21 @@ def summary_counts(summary: Any) -> list[str]:
         return [
             f"extracted {extracted:,} of {summary.selected:,}" if summary.selected else f"extracted {extracted:,}",
             f"failed {summary.failed + summary.not_in_mailbox:,}",
+        ]
+    if isinstance(summary, AuditResult):
+        return [
+            f"sampled {summary.sampled:,}",
+            f"extracted {summary.reused + summary.extraction.extracted:,} of {summary.sampled:,}",
+            f"failed {summary.extraction.failed + summary.extraction.not_in_mailbox:,}",
+        ]
+    if isinstance(summary, IncludeSummary):
+        if summary.outcome != LOWERED:
+            return []
+        wanted = summary.would_add + summary.already_extracted
+        return [
+            f"extracted {summary.already_extracted + summary.extraction.extracted:,} of {wanted:,}",
+            f"flight emails {summary.with_flights:,}",
+            f"failed {summary.extraction.failed + summary.extraction.not_in_mailbox:,}",
         ]
     if dataclasses.is_dataclass(summary):
         values = {field.name: getattr(summary, field.name) for field in dataclasses.fields(summary)}
@@ -180,6 +207,7 @@ class ProgressScreen(Screen):
         self.runner = EngineRunner(inputs, self)
         self.view = STARTING
         self.stages: dict[str, str] = {}  # stage -> its state, in the engine's order
+        self.notes: dict[str, str] = {}  # stage -> the note it finished with
         self.counts: dict[str, list[str]] = {}
 
     def compose(self) -> ComposeResult:
@@ -221,6 +249,7 @@ class ProgressScreen(Screen):
         event = message.event
         if isinstance(event, RunStarted):
             self.stages = {stage: WAITING for stage in event.stages}
+            self.notes = {}
             # Counts are the session's totals: they stay until the new run's replace them.
             self._draw_stages()
             self._draw_counts()
@@ -230,7 +259,8 @@ class ProgressScreen(Screen):
             self.stages[event.stage] = RUNNING_STAGE
             self._draw_stages()
             current = self.query_one("#current")
-            current.display = True
+            # A stage with nothing to handle finishes at once: no bar to draw.
+            current.display = event.total != 0
             current.border_title = f"Current stage: {event.stage}"
             self.query_one("#current-label").display = False
             self.query_one("#bar", ProgressBar).update(total=event.total or None, progress=0)
@@ -248,14 +278,17 @@ class ProgressScreen(Screen):
             self._draw_counts()
         elif isinstance(event, StageFinished):
             self.stages[event.stage] = event.state
+            if event.note:
+                self.notes[event.stage] = event.note
             self._draw_stages()
             self.query_one("#current").display = False
-            if event.summary is not None and event.stage in self.counts:
-                # The final figures of a stage whose counts were showing.
-                self.counts[event.stage] = summary_counts(event.summary)
-                self._draw_counts()
-            if event.note:
-                self._log(f"{event.stage}: {event.note}")
+            if event.summary is not None and (event.stage in self.counts or isinstance(event.summary, FINAL_COUNTS)):
+                # The final figures of a stage whose counts were showing, or
+                # of a known stage that had nothing to send.
+                counts = summary_counts(event.summary)
+                if counts:
+                    self.counts[event.stage] = counts
+                    self._draw_counts()
         elif isinstance(event, Notice):
             self._log(event.message)
         elif isinstance(event, Problem):
@@ -333,6 +366,8 @@ class ProgressScreen(Screen):
         for stage, state in self.stages.items():
             mark, style = STATE_MARKS.get(state, ("?", ""))
             lines.append(f"[{style}]{mark}[/] {escape(stage).ljust(width)}  [{style}]{escape(state)}[/]")
+            if stage in self.notes:
+                lines.append(f"  {' ' * width}  [dim]{escape(self.notes[stage])}[/]")
         self.query_one("#stages", Static).update("\n".join(lines))
 
     def _draw_counts(self) -> None:

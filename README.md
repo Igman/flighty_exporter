@@ -203,7 +203,8 @@ uv run flighty-exporter
 ```
 
 With no command, in a terminal, the tool opens a full-screen application that
-runs classify, extract and review (as `run` does) and shows them live: every
+runs the same stages as `run` (classify, extract and review; audit and
+include too when `[run] thoroughness = "thorough"`) and shows them live: every
 stage with its state, a progress bar for the running stage with the messages
 done, the time per message and the time remaining, running counts, and the
 end-of-run report when it finishes. It reads the same config file (`--config`
