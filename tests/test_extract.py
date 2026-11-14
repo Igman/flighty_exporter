@@ -107,6 +107,7 @@ def test_successful_extraction_lands_in_the_review_table(workspace):
             "message_date": "2025-03-04 09:15",
             "message_subject": FLIGHT_SUBJECT,
             "source_messages": f"2025-03-04 {FLIGHT_SUBJECT}",
+            "flight_id": "2025-05-12 ZZ1234",
         }
     ]
     assert read_csv(workspace.root / "failures.csv") == []
@@ -379,7 +380,7 @@ def test_one_row_per_segment_and_one_row_per_flight(workspace):
     assert header(workspace.root / "review.csv") == [
         "keep", "needs_attention", "attention_reason", "date", "flight_number", "airline", "origin",
         "destination", "booking_reference", "passengers", "confidence", "evidence", "email_kind", "source", "source_count",
-        "message_id", "message_date", "message_subject", "source_messages",
+        "message_id", "message_date", "message_subject", "source_messages", "flight_id",
     ]
 
 
