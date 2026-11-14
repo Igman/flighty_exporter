@@ -34,7 +34,7 @@ from ...engine.setup import (
     parse_name_variants,
     write_answers,
 )
-from ..paths import path_text
+from ..paths import path_text, wrap_path_lines
 from .readiness import ReadinessScreen
 
 MAILBOX_HELP = (
@@ -88,7 +88,7 @@ class SetupScreen(Screen):
         config_path = self.app.config_path  # type: ignore[attr-defined]
         with VerticalScroll():
             if self.notice:
-                yield Static(escape("\n".join(self.notice)), id="notice")
+                yield Static(escape(wrap_path_lines("\n".join(self.notice))), id="notice")
             yield Static(
                 "[b]Setup[/b]: three questions. The answers are written to the config file below, keeping any "
                 f"other settings in it:\n{escape(path_text(config_path, '  '))}",

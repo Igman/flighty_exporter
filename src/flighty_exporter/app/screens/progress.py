@@ -48,7 +48,7 @@ from ...engine.thorough import LOWERED, IncludeSummary
 from ...stages.audit import AuditResult
 from ...stages.classify import ClassifySummary
 from ...stages.extract import ExtractSummary
-from ..paths import path_text
+from ..paths import path_text, wrap_path_lines
 from ..runner import EngineEvent, EngineRunner, RunEnded, RunInputs
 
 # What the screen is doing.
@@ -306,7 +306,7 @@ class ProgressScreen(Screen):
         elif isinstance(event, RunFinished):
             self.report = event.report
             report = self.query_one("#report", Static)
-            report.update(escape(format_report(event.report, REVIEW_NEXT)))
+            report.update(escape(wrap_path_lines(format_report(event.report, REVIEW_NEXT))))
             report.display = True
             report.scroll_visible()
             self.post_message(self.RunCompleted(event.report))

@@ -29,3 +29,19 @@ def path_lines(path: Path | str, width: int = WIDTH) -> list[str]:
 def path_text(path: Path | str, indent: str = "") -> str:
     """``path_lines`` joined, each line after ``indent``."""
     return "\n".join(indent + line for line in path_lines(path))
+
+
+def wrap_path_lines(text: str) -> str:
+    """``text`` with every over-long line of the form "label: /a/path" put
+    as the label, then the path on lines of its own under it (the report's
+    "Files written", the lines starting fresh prints)."""
+    out = []
+    for line in text.split("\n"):
+        label, separator, rest = line.partition(": /")
+        if separator and len(line) > WIDTH:
+            indent = " " * (len(label) - len(label.lstrip()) + 2)
+            out.append(f"{label}:")
+            out.append(path_text("/" + rest, indent))
+        else:
+            out.append(line)
+    return "\n".join(out)
