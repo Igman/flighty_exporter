@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
@@ -47,6 +48,8 @@ class ClassifySummary:
     failed: int = 0
     failures: list[tuple[str, str]] = field(default_factory=list)
     interrupted: bool = False
+    # Ended early for another reason (server unreachable, a stop requested).
+    stopped: bool = False
 
 
 def run_classify(
@@ -55,6 +58,7 @@ def run_classify(
     store: Store,
     client: DecisionClient,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> ClassifySummary:
     """Run the pass. KeyboardInterrupt and OllamaUnreachable propagate after
     the summary so far is attached to the exception as ``summary``."""
@@ -62,7 +66,7 @@ def run_classify(
     summary = ClassifySummary(total=len(mbox))
     done = store.classified_ids(config.decision_model)
     resolved = store.markup_ids()
-    progress = Progress(summary.total, "classify", progress_stream)
+    progress = Progress(summary.total, "classify", progress_stream, on_progress, summary)
     try:
         for position, entry in mbox.positioned():
             if isinstance(entry, Skipped):
@@ -90,6 +94,7 @@ def run_classify(
                 progress.advance(time.monotonic() - started)
     except BaseException as exc:
         summary.interrupted = isinstance(exc, KeyboardInterrupt)
+        summary.stopped = not summary.interrupted
         exc.summary = summary  # type: ignore[attr-defined]
         raise
     finally:
@@ -141,7 +146,12 @@ def _classify_one(
 def format_summary(summary: ClassifySummary, config: Config, store: Store) -> str:
     """The printed summary: this run's counts, then what the store holds for
     the configured decision model (so a rerun still shows the results)."""
-    lines = ["Classify pass interrupted. Rerun to resume." if summary.interrupted else "Classify pass finished."]
+    if summary.interrupted:
+        lines = ["Classify pass interrupted. Rerun to resume."]
+    elif summary.stopped:
+        lines = ["Classify pass stopped. Rerun to resume."]
+    else:
+        lines = ["Classify pass finished."]
     lines += [
         f"  messages in mailbox:  {summary.total}",
         f"  classified:           {summary.classified}",

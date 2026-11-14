@@ -42,6 +42,9 @@ config next to the mailbox works wherever the tool is run from.
     output_dir = "."
     data_dir = "~/.cache/flighty_exporter/openflights"
     data_url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
+
+    [run]
+    thoroughness = "quick"   # or "thorough"
 """
 
 from __future__ import annotations
@@ -57,6 +60,11 @@ from .flights.passengers import names_someone
 DEFAULT_CONFIG_NAME = "flighty_exporter.toml"
 DEFAULT_DATA_DIR = Path.home() / ".cache" / "flighty_exporter" / "openflights"
 DEFAULT_DATA_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
+
+# How hard `run` looks for missed flight emails: Quick runs no audit.
+QUICK = "quick"
+THOROUGH = "thorough"
+THOROUGHNESS = (QUICK, THOROUGH)
 
 
 class ConfigError(Exception):
@@ -111,6 +119,8 @@ class Config:
     audit_sample_size: int = 25
     audit_seed: int = 1
     audit_output: Path = Path("audit.csv")
+    # How thorough `run` is (QUICK or THOROUGH); `run --thoroughness` overrides it.
+    thoroughness: str = QUICK
 
 
 # The schema: section -> key -> (Config field, expected type(s)).
@@ -152,6 +162,9 @@ _SCHEMA: dict[str | None, dict[str, tuple[str, tuple[type, ...]]]] = {
         "output_dir": ("export_output_dir", (str,)),
         "data_dir": ("export_data_dir", (str,)),
         "data_url": ("export_data_url", (str,)),
+    },
+    "run": {
+        "thoroughness": ("thoroughness", (str,)),
     },
 }
 
@@ -224,6 +237,8 @@ def _resolve(data: dict[str, Any], base: Path) -> Config:
                     f"[passenger] names must be a list of names, e.g. [\"Jordan Ellis\"]; {name!r} is not a name"
                 )
         values["passenger_names"] = tuple(" ".join(name.split()) for name in names)
+    if "thoroughness" in values and values["thoroughness"] not in THOROUGHNESS:
+        raise ConfigError(f'[run] thoroughness must be "quick" or "thorough", got {values["thoroughness"]!r}')
     if "ollama_address" in values:
         values["ollama_address"] = _ollama_address(values["ollama_address"])
     return Config(**values)

@@ -1,9 +1,11 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
-``extract``, ``review``, ``audit`` and ``export``. ``mark-added`` ticks a
-flight on the manual-add list in the store, and ``sources`` lists the saved
-text of each flight's source emails.
+``extract``, ``review``, ``audit`` and ``export``; ``run`` performs
+classify, extract and review in one go through the run engine (see
+``engine.pipeline``) and prints its events. ``mark-added`` ticks a flight on
+the manual-add list in the store, and ``sources`` lists the saved text of
+each flight's source emails.
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
@@ -14,19 +16,23 @@ to the store are held, so a failed check leaves the store as it was.
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
+from .engine.models import address_warning, decision_client, extraction_client, pass_store
+from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
+from .engine.report import format_report
 from .flights.decisions import is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
 from .ollama.extraction import ExtractionClient
-from .ollama.preflight import PREFLIGHT_TIMEOUT, check_address, check_server
 from .output import export, review, sources
 from .output.openflights import ReferenceDataError
 from .stages import audit, extract
@@ -37,6 +43,7 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
+EXIT_STOPPED = 143  # run asked to stop (SIGTERM) between messages
 
 
 class UsageError(Exception):
@@ -58,62 +65,25 @@ def _store_path(args: argparse.Namespace, config: Config) -> Path:
     return Path(args.store).expanduser() if args.store else config.store
 
 
+def _warn(text: str) -> None:
+    print(text, file=sys.stderr)
+
+
 def _check_address(args: argparse.Namespace, config: Config) -> None:
     """Refuse a non-local Ollama address before anything is sent to it."""
-    warning = check_address(config.ollama_address, config.ollama_allow_remote or args.allow_remote)
+    warning = address_warning(config, args.allow_remote)
     if warning:
-        print(warning, file=sys.stderr)
+        _warn(warning)
 
 
-@contextmanager
 def _pass_store(
     store_path: Path, client: DecisionClient | ExtractionClient, setting: str, command: str, config: Config
-) -> Iterator[Store]:
-    """Open the store for a model pass, with the preflight check run just
-    before the client's first request. Writes are held until the check has
-    passed; if it fails they are rolled back, and a store this run created
-    is removed again."""
-    existed = store_path.exists()
-    store = Store(store_path)
-    store.hold_writes()
-
-    def preflight() -> None:
-        check_server(
-            config.ollama_address,
-            client.model,
-            setting,
-            command,
-            timeout=min(PREFLIGHT_TIMEOUT, config.ollama_timeout_seconds),
-            warn=lambda text: print(text, file=sys.stderr),
-        )
-        store.release_writes(keep=True)
-
-    client.before_first_request = preflight
-    failed = False
-    try:
-        yield store
-    except PreflightError:
-        failed = True
-        raise
-    finally:
-        store.release_writes(keep=not failed)
-        store.close()
-        if failed and not existed:
-            for suffix in ("", "-wal", "-shm", "-journal"):
-                Path(f"{store_path}{suffix}").unlink(missing_ok=True)
+) -> AbstractContextManager[Store]:
+    """The store for a model pass, with the lazy preflight check (see ``engine.models``)."""
+    return pass_store(store_path, client, setting, command, config, warn=_warn)
 
 
-def _extraction_client(config: Config) -> ExtractionClient:
-    """The extraction client extract and audit both use, so both send the same requests."""
-    return ExtractionClient(
-        config.ollama_address,
-        config.extraction_model,
-        timeout=config.ollama_timeout_seconds,
-        num_ctx=config.extract_num_ctx,
-        num_predict=config.extract_num_predict,
-        retries=config.extract_retries,
-        max_input_chars=config.extract_max_input_chars,
-    )
+_extraction_client = extraction_client
 
 
 def _pass_stopped(exc: OllamaUnreachable, format_partial: Callable[[Any], str], rerun: str) -> int:
@@ -131,12 +101,7 @@ def cmd_classify(args: argparse.Namespace, config: Config) -> int:
     _check_address(args, config)
     mailbox_path = _mailbox_path(args, config)
     store_path = _store_path(args, config)
-    client = DecisionClient(
-        config.ollama_address,
-        config.decision_model,
-        config.ollama_timeout_seconds,
-        max_body_chars=config.classify_max_body_chars,
-    )
+    client = decision_client(config)
     with _pass_store(store_path, client, "[models] decision", "classify", config) as store:
         try:
             summary = run_classify(config, mailbox_path, store, client)
@@ -412,6 +377,109 @@ COMMANDS["sources"] = (
     "list each flight review would list with its source emails and their saved text (needs only the store)",
     _sources_arguments,
     cmd_sources,
+)
+
+
+RUN_RESUME = "Progress so far is saved; rerun run to resume."
+
+
+class _RunPrinter:
+    """Prints the run engine's events the way the single commands print
+    their passes: a start line and the pass's own summary for each stage
+    (the passes print their progress lines themselves), problems and
+    warnings on stderr, then the end-of-run report."""
+
+    def __init__(self, config: Config, store_path: Path):
+        self.config = config
+        self.store_path = store_path
+
+    def __call__(self, event: Event) -> None:
+        if isinstance(event, StageStarted):
+            print(f"Starting {event.stage}.")
+        elif isinstance(event, StageFinished) and event.summary is not None:
+            self._summary(event)
+            print()
+        elif isinstance(event, Notice):
+            _warn(event.message)
+        elif isinstance(event, Problem):
+            print(f"error: {event.message}", file=sys.stderr)
+        elif isinstance(event, RunFinished):
+            print(format_report(event.report))
+
+    def _summary(self, event: StageFinished) -> None:
+        if event.stage in (CLASSIFY, EXTRACT):
+            formatter = format_summary if event.stage == CLASSIFY else extract.format_summary
+            with Store(self.store_path) as store:
+                print(formatter(event.summary, self.config, store))
+            return
+        if event.note:
+            print(f"Review table {event.summary.review_path}: {event.note}.")
+            print(f"Failures file written to {event.summary.failures_path}")
+        else:
+            print(review.format_summary(event.summary))
+        for warning in review.format_warnings(event.summary):
+            _warn(warning)
+
+
+def cmd_run(args: argparse.Namespace, config: Config) -> int:
+    mailbox_path = _mailbox_path(args, config)
+    store_path = _store_path(args, config)
+    stop_requested: list[int] = []
+    # SIGTERM asks the run to stop after the message in progress.
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop_requested.append(signum))
+    try:
+        result = run_pipeline(
+            config,
+            mailbox_path,
+            store_path,
+            allow_remote=args.allow_remote,
+            thoroughness=args.thoroughness,
+            review_path=Path(args.output).expanduser() if args.output else None,
+            failures_path=Path(args.failures).expanduser() if args.failures else None,
+            force=args.force,
+            subscriber=_RunPrinter(config, store_path),
+            should_stop=lambda: bool(stop_requested),
+        )
+    except RunError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        print(f"Interrupted. {RUN_RESUME}", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    if result.state == STOPPED_BY_PROBLEM:
+        if result.problem is not None and result.problem.kind == UNREACHABLE:
+            print(RUN_RESUME, file=sys.stderr)
+        return EXIT_ERROR
+    if result.state == STOPPED_ON_REQUEST:
+        print(f"Stopped. {RUN_RESUME}", file=sys.stderr)
+        return EXIT_STOPPED
+    return EXIT_OK
+
+
+def _run_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--mailbox", help="mbox file to read (overrides `mailbox` in config)")
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    _allow_remote_argument(parser)
+    parser.add_argument(
+        "--thoroughness",
+        choices=("quick", "thorough"),
+        help="how hard to look for flight emails the first filter missed (overrides [run] thoroughness); "
+        "quick runs no audit",
+    )
+    parser.add_argument("--output", help="review CSV to write (overrides [review] output in config)")
+    parser.add_argument("--failures", help="failures CSV to write (overrides [review] failures in config)")
+    parser.add_argument(
+        "--force", action="store_true", help="regenerate the review CSV even if it has been edited"
+    )
+
+
+COMMANDS["run"] = (
+    "run classify, extract and review in one go, resuming where an earlier run stopped, with progress and "
+    "an end-of-run report",
+    _run_arguments,
+    cmd_run,
 )
 
 

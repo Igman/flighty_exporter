@@ -102,3 +102,9 @@ output = "audit.csv"
 # thereafter; the download sends nothing about you.
 data_dir = "~/.cache/flighty_exporter/openflights"
 data_url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
+
+[run]
+# How hard `run` looks for flight emails the first filter missed. "quick"
+# (the default) runs classify, extract and review, and no audit. "thorough"
+# is not available yet. Can also be given with `run --thoroughness`.
+thoroughness = "quick"

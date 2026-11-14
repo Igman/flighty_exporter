@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
@@ -49,6 +50,8 @@ class ExtractSummary:
     pdfs_not_read: int = 0
     failures: list[tuple[str, str]] = field(default_factory=list)
     interrupted: bool = False
+    # Ended early for another reason (server unreachable, a stop requested).
+    stopped: bool = False
 
 
 def run_extract(
@@ -57,6 +60,7 @@ def run_extract(
     store: Store,
     client: ExtractionClient,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> ExtractSummary:
     """Run the pass. KeyboardInterrupt and OllamaUnreachable propagate after
     the summary so far is attached to the exception as ``summary``."""
@@ -65,7 +69,7 @@ def run_extract(
     summary = ExtractSummary(selected=len(candidates))
     pending = {identifier for identifier in candidates if identifier not in done}
     summary.already_extracted = len(candidates) - len(pending)
-    extract_messages(mailbox_path, pending, store, client, summary, PASS_NAME, progress_stream)
+    extract_messages(mailbox_path, pending, store, client, summary, PASS_NAME, progress_stream, on_progress)
     return summary
 
 
@@ -77,6 +81,7 @@ def extract_messages(
     summary: ExtractSummary,
     label: str = PASS_NAME,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> None:
     """Send the ``pending`` messages to the extraction model and store each
     result as the extract pass does (records, failures, attachment notes), so
@@ -88,9 +93,9 @@ def extract_messages(
     if not pending:
         return
     mbox = Mailbox(mailbox_path, read_pdfs=True)
-    progress = Progress(len(pending), label, progress_stream)
+    progress = Progress(len(pending), label, progress_stream, on_progress, summary)
     try:
-        positions = _locate(mbox, pending, store, label, progress_stream)
+        positions = _locate(mbox, pending, store, label, progress_stream, on_progress, summary)
         for identifier, position in sorted(positions.items(), key=lambda item: item[1]):
             entry = mbox.entry_at(position)
             if not isinstance(entry, Message) or entry.identifier != identifier:
@@ -106,6 +111,7 @@ def extract_messages(
             progress.advance()
     except BaseException as exc:
         summary.interrupted = isinstance(exc, KeyboardInterrupt)
+        summary.stopped = not summary.interrupted
         exc.summary = summary  # type: ignore[attr-defined]
         raise
     finally:
@@ -114,12 +120,19 @@ def extract_messages(
 
 
 def _locate(
-    mbox: Mailbox, wanted: set[str], store: Store, label: str, progress_stream: TextIO | None
+    mbox: Mailbox,
+    wanted: set[str],
+    store: Store,
+    label: str,
+    progress_stream: TextIO | None,
+    on_progress: Callable[[Progress], None] | None = None,
+    summary: ExtractSummary | None = None,
 ) -> dict[str, int]:
     """The position of each ``wanted`` message that is in the mailbox. A
     recorded position is used if the message there has the identifier;
     otherwise the mailbox's headers are scanned once and every position
-    found is recorded."""
+    found is recorded. The scan reports its own progress (over the mailbox's
+    entries) to ``on_progress``; positions are recorded only once it ends."""
     recorded = store.message_positions(wanted)
     found = {
         identifier: position
@@ -129,7 +142,7 @@ def _locate(
     if len(found) == len(wanted):
         return found
     scanned: dict[str, int] = {}
-    progress = Progress(len(mbox), f"{label}: locating messages", progress_stream)
+    progress = Progress(len(mbox), f"{label}: locating messages", progress_stream, on_progress, summary)
     try:
         for position, identifier in mbox.identifiers():
             if identifier is not None:
@@ -163,7 +176,12 @@ def _extract_one(message: Message, store: Store, client: ExtractionClient, summa
 def format_summary(summary: ExtractSummary, config: Config, store: Store) -> str:
     """The printed summary: this run's counts, then what the store holds for
     the configured extraction model among the selected messages."""
-    lines = ["Extract pass interrupted. Rerun to resume." if summary.interrupted else "Extract pass finished."]
+    if summary.interrupted:
+        lines = ["Extract pass interrupted. Rerun to resume."]
+    elif summary.stopped:
+        lines = ["Extract pass stopped. Rerun to resume."]
+    else:
+        lines = ["Extract pass finished."]
     lines += [
         f"  selected (gate >= {config.threshold:g}): {summary.selected}",
         f"  extracted:            {summary.extracted}",

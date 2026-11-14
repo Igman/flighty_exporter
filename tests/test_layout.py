@@ -11,7 +11,9 @@ import only from the groups listed for it in ``ALLOWED``:
 - the top-level core (config, store, progress, tables) may import only
   flights;
 - stages and output may import from everything below them, but not from
-  each other, and neither imports the command line.
+  each other, and neither imports the command line;
+- engine (the run engine) may import stages, output and everything below
+  them; nothing but the command line imports it.
 
 No module imports a name beginning with an underscore from another module,
 and there are no import cycles between groups. The imports are read with
@@ -30,7 +32,7 @@ from pathlib import Path
 PACKAGE = "flighty_exporter"
 SOURCE = Path(__file__).resolve().parents[1] / "src" / PACKAGE
 
-SUBPACKAGES = ("flights", "mail", "ollama", "stages", "output")
+SUBPACKAGES = ("flights", "mail", "ollama", "stages", "output", "engine")
 TOP_LEVEL = {
     "__init__": "core",
     "config": "core",
@@ -48,7 +50,8 @@ ALLOWED: dict[str, set[str]] = {
     "core": {"flights"},
     "stages": {"core", "ollama", "mail", "flights"},
     "output": {"core", "ollama", "mail", "flights"},
-    "entry": {"output", "stages", "core", "ollama", "mail", "flights"},
+    "entry": {"output", "stages", "core", "ollama", "mail", "flights", "engine"},
+    "engine": {"output", "stages", "core", "ollama", "mail", "flights"},
 }
 
 # Narrower rules inside an allowed edge: (importing group, imported group) ->
@@ -261,6 +264,7 @@ def test_the_checks_see_the_package():
     assert ("stages.audit", "tables") in found
     assert ("ollama.decision", "mail.reader") in found
     assert ("cli", "stages.audit") in found  # from .stages import audit
+    assert ("cli", "engine.models") in found
     assert {"mail", "ollama", "core", "stages", "output", "entry"} <= set(group_edges(SOURCE))
 
 
@@ -300,9 +304,9 @@ def test_a_forbidden_import_is_reported(tmp_path):
 
 
 def test_an_unplaced_module_is_reported(tmp_path):
-    root = _package(tmp_path, {"engine.py": "", "screens/__init__.py": ""})
+    root = _package(tmp_path, {"helpers.py": "", "screens/__init__.py": ""})
     problems = rule_violations(root)
-    assert "engine is in no group: add it to the layout on purpose" in problems
+    assert "helpers is in no group: add it to the layout on purpose" in problems
     assert "screens is in no group: add it to the layout on purpose" in problems
 
 

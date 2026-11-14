@@ -66,9 +66,9 @@ private and never commit them:
 | File | Written by | Default name |
 | --- | --- | --- |
 | Your config (paths, name variants) | you | `flighty_exporter.toml` |
-| The store: every pass's results, the text of the emails flights came from, and your review decisions (SQLite) | `classify`, `extract`, `audit`, `export`, `mark-added` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
-| The review table | `review` | `review.csv` |
-| The failures file | `review` | `failures.csv` |
+| The store: every pass's results, the text of the emails flights came from, and your review decisions (SQLite) | `classify`, `extract`, `audit`, `run`, `export`, `mark-added` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
+| The review table | `review`, `run` | `review.csv` |
+| The failures file | `review`, `run` | `failures.csv` |
 | The audit table | `audit` | `audit.csv` |
 | The import file | `export` | `openflights-backup-YYYY-MM-DD-HHMM.csv` |
 | The manual-add list | `export` | `manual-add.csv` |
@@ -195,6 +195,29 @@ instruction if not.
 
 Progress, with the time per message and an estimate of the time remaining, is
 shown on stderr while the model commands run.
+
+### All in one go: run
+
+```
+uv run flighty-exporter run
+```
+
+`run` performs classify, extract and review in that order, printing each
+stage's start, its usual progress and summary, and then an end-of-run report:
+flights found, how many need attention and why, bookings cancelled, replaced
+and dropped as other passengers', messages that failed in each stage, PDFs
+not read, where each file was written, and the next step (check the review
+table, then run `export`). It takes `--mailbox`, `--store`, `--allow-remote`,
+review's `--output`, `--failures` and `--force`, and `--thoroughness`
+(`quick`, the default, runs no audit; `thorough` is not available yet).
+
+Like the single commands, `run` resumes where it stopped: rerun it after Ctrl-C
+(exit status 130) and no finished message is sent to a model again. A
+`SIGTERM` (`kill`) asks it to stop after the message in progress (exit status
+143). A model-server problem stops it with the same message the single
+commands print and exit status 1; it never asks a question. If the review
+table exists and you have edited it, `run` leaves it as it is, says so, and
+still reports the flights; pass `--force` to regenerate it.
 
 ### 1. classify
 
@@ -630,6 +653,12 @@ is no config file). An unknown setting is an error.
 | `data_dir` | `"~/.cache/flighty_exporter/openflights"` | Cache for OpenFlights' `airports.dat` and `airlines.dat`. |
 | `data_url` | `"https://raw.githubusercontent.com/jpatokal/openflights/master/data/"` | Where those files are downloaded from on first use. |
 
+**`[run]`**
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `thoroughness` | `"quick"` | How hard `run` looks for flight emails the first filter missed: `"quick"` runs no audit; `"thorough"` is not available yet. Overridden by `run --thoroughness`. |
+
 Every command also accepts `--config FILE` before the command name, e.g.
 `uv run flighty-exporter --config ~/flights/flighty_exporter.toml review`.
 
@@ -755,6 +784,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
 | `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
+| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
 
 The dependency rule, enforced by `tests/test_layout.py`:
@@ -768,6 +798,8 @@ The dependency rule, enforced by `tests/test_layout.py`:
 - `config`, `store`, `progress` and `tables` may import `flights` only.
 - `stages` and `output` may import from everything below them, but not from
   each other; neither imports `cli`.
+- `engine` may import `stages`, `output` and everything below them; only
+  `cli` imports it.
 - No module imports a name beginning with an underscore from another module,
   and there are no import cycles. A new module must be given a group in the
   test.

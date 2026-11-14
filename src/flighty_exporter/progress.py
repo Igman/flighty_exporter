@@ -3,16 +3,29 @@
 On a terminal the line is redrawn in place after every message. Otherwise
 (piped, logged) a line is printed every 5% of the mailbox and at the end, so
 logs stay readable.
+
+The same figures are available as data: ``on_advance``, if given, is called
+with the progress after every message, and ``counts`` carries whatever the
+stage passed (its summary so far), so a caller can follow a pass without
+reading its text.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import TextIO
+from collections.abc import Callable
+from typing import Any, TextIO
 
 
 class Progress:
-    def __init__(self, total: int, label: str, stream: TextIO | None = None):
+    def __init__(
+        self,
+        total: int,
+        label: str,
+        stream: TextIO | None = None,
+        on_advance: Callable[[Progress], None] | None = None,
+        counts: Any = None,
+    ):
         self.total = total
         self.label = label
         self.stream = stream or sys.stderr
@@ -22,6 +35,8 @@ class Progress:
         self.work_seconds = 0.0
         self._step = max(1, total // 20)
         self._last_len = 0
+        self.on_advance = on_advance
+        self.counts = counts
 
     def advance(self, seconds_of_work: float | None = None) -> None:
         """One mailbox entry handled; pass the time spent if it did real work
@@ -32,6 +47,18 @@ class Progress:
             self.work_seconds += seconds_of_work
         if self.interactive or self.done % self._step == 0 or self.done == self.total:
             self._draw()
+        if self.on_advance is not None:
+            self.on_advance(self)
+
+    @property
+    def seconds_per_message(self) -> float | None:
+        """Measured over the messages that did real work; None until one has."""
+        return self.work_seconds / self.work_done if self.work_done else None
+
+    @property
+    def seconds_remaining(self) -> float | None:
+        per = self.seconds_per_message
+        return None if per is None else (self.total - self.done) * per
 
     def finish(self) -> None:
         if self.interactive and self._last_len:

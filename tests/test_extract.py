@@ -514,3 +514,32 @@ def test_unreachable_ollama_stops_extract_with_a_clear_message(workspace):
     assert result.returncode != 0
     assert "ollama" in result.stderr.lower()
     assert "127.0.0.1:9" in result.stderr
+
+
+def test_server_going_away_mid_extract_says_the_pass_stopped_with_the_counts_so_far(workspace):
+    subjects = [f"Invented itinerary number {i}" for i in range(4)]
+    mbox = write_mbox(workspace.root / "mail.mbox", [email(s, FLIGHT_BODY) for s in subjects])
+    workspace.ollama.default_decision = Decision(0.9, "booking confirmation")
+    classify(workspace, mbox)
+
+    def vanish_on_second(request):
+        if request.path == "/api/chat" and len(workspace.ollama.chat_requests()) == 2:
+            workspace.ollama.unreachable = True
+
+    workspace.ollama.on_request = vanish_on_second
+    result = workspace.run("extract", "--mailbox", str(mbox))
+
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "Extract pass stopped. Rerun to resume."
+    assert "finished" not in result.stdout
+    assert result.count("selected (gate >= 0.05)") == 4
+    assert result.count("extracted") == 1
+    assert f"error: cannot reach Ollama at {workspace.ollama.url}" in result.stderr
+    assert "Progress so far is saved; rerun extract to resume." in result.stderr
+
+    workspace.ollama.on_request = None
+    workspace.ollama.unreachable = False
+    rerun = workspace.run("extract", "--mailbox", str(mbox))
+    assert rerun.returncode == 0, rerun.stderr
+    assert rerun.stdout.splitlines()[0] == "Extract pass finished."
+    assert rerun.count("already extracted") == 1
