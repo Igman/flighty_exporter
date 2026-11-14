@@ -460,7 +460,8 @@ class _RunPrinter:
             print(audit.no_population_message(result, self.config))
         else:
             with Store(self.store_path) as store:
-                print(audit.format_report(result, self.config, store, self.config.audit_output))
+                # The include stage acts on the reading at once: no advice to do it by hand.
+                print(audit.format_report(result, self.config, store, self.config.audit_output, advice=False))
 
 
 def cmd_run(args: argparse.Namespace, config: Config) -> int:

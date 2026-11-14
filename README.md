@@ -266,7 +266,9 @@ the session started and was last active, how far each stage got (messages
 recorded, classified, resolved from machine-readable data, at or above the
 threshold in use, extracted, flights and flights with a saved decision), whether it
 looks complete, the files it wrote that still exist, and what starting fresh
-would lose. It reads only the store, and with no store prints
+would lose. The threshold in use is the effective threshold; when a Thorough
+run lowered it, `session` says so and shows the configured value too (for
+example `0.02 (lowered for this session from the configured 0.05)`). It reads only the store, and with no store prints
 `No session yet.` `--fresh-preview` lists what starting fresh would delete,
 without deleting anything.
 

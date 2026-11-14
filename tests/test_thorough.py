@@ -5,6 +5,7 @@ Ollama. Every email, person, booking and flight here is invented."""
 
 from __future__ import annotations
 
+import re
 import signal
 import threading
 
@@ -392,3 +393,95 @@ def test_the_server_going_away_during_the_audit_stops_the_run_with_the_existing_
     assert not set(answered) & set(workspace.ollama.extracted_subjects()[3:])
     assert sorted(set(workspace.ollama.extracted_subjects())) == sorted([FLIGHT_SUBJECT, *SPREAD])
     assert "Run finished." in resumed.stdout
+
+
+# -- with sessions ----------------------------------------------------------------------------
+
+
+def session_value(text: str, label: str) -> str:
+    match = re.search(rf"^\s*{re.escape(label)}:\s+(.*?)\s*$", text, re.MULTILINE)
+    assert match, f"no '{label}' line in:\n{text}"
+    return match.group(1)
+
+
+def session(workspace) -> str:
+    result = workspace.run("session")
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_the_audit_report_is_recorded_and_listed_with_the_files_written(workspace):
+    configure(workspace, "\n[audit]\nsample_size = 1\n")
+    mbox = low_band_mailbox(workspace)
+
+    result = run(workspace, mbox, "--thoroughness", "thorough")
+
+    audit_csv = (workspace.root / "audit.csv").resolve()
+    files = report(result)[report(result).index("Files written:") + 1:]
+    assert f"  audit report: {audit_csv}" in files
+    assert f"  audit report: {audit_csv}" in session(workspace)
+    preview = workspace.run("session", "--fresh-preview").stdout
+    assert f"Would delete audit report: {audit_csv}" in preview
+
+
+def test_session_shows_the_lowered_threshold_with_both_numbers(workspace):
+    configure(workspace, "\n[audit]\nsample_size = 1\n")
+    mbox = low_band_mailbox(workspace)
+    run(workspace, mbox)
+    assert session_value(session(workspace), "threshold in use") == "0.05"
+
+    run(workspace, mbox, "--thoroughness", "thorough")
+
+    text = session(workspace)
+    assert session_value(text, "threshold") == "0.05"  # what the session was started with
+    assert session_value(text, "threshold in use") == "0.02 (lowered for this session from the configured 0.05)"
+    assert session_value(text, "at or above the threshold") == "4"
+    assert session_value(text, "state") == "complete"
+
+
+def test_a_session_whose_include_was_stopped_is_unfinished_at_the_lowered_threshold(workspace):
+    configure(workspace, "\n[audit]\nsample_size = 1\n")
+    mbox = low_band_mailbox(workspace)
+    code, _, _ = stop_on_chat(workspace, mbox, 4)
+    assert code == 143
+
+    text = session(workspace)
+
+    assert session_value(text, "threshold in use") == "0.02 (lowered for this session from the configured 0.05)"
+    assert session_value(text, "extracted") == "3 of 4"
+    assert session_value(text, "state") == "unfinished: 1 email still to extract"
+
+
+def test_run_fresh_thorough_clears_the_effective_threshold_and_runs_the_five_stages(workspace):
+    configure(workspace, "\n[audit]\nsample_size = 1\n")
+    mbox = low_band_mailbox(workspace)
+    run(workspace, mbox, "--thoroughness", "thorough")
+    audit_csv = (workspace.root / "audit.csv").resolve()
+    workspace.ollama.requests.clear()
+
+    result = run(workspace, mbox, "--fresh", "--thoroughness", "thorough")
+
+    out = result.stdout
+    head = out[:out.index("Starting classify.")]
+    assert f"Deleted audit report: {audit_csv}" in head and "Deleted the store:" in head
+    stages = ["Starting classify.", "Starting extract.", "Starting audit.", "Starting include.", "Starting review."]
+    assert [out.index(s) for s in stages] == sorted(out.index(s) for s in stages)
+    # A fresh store has no effective threshold: the audit reads against 0.05 again and lowers it again.
+    assert "Extract pass finished.\n  selected (gate >= 0.05): 1" in out
+    assert check_lines(result)[-1].startswith("    threshold lowered from 0.05 to 0.02 for this session")
+    assert len(workspace.ollama.chat_requests()) == 5
+    assert flight_numbers(workspace.root / "review.csv") == ALL_FLIGHTS
+
+
+def test_the_audit_inside_run_leaves_out_the_advice_the_audit_command_gives(workspace):
+    configure(workspace, "\n[audit]\nsample_size = 1\n")
+    mbox = low_band_mailbox(workspace)
+    advice = "The config was not changed. After lowering [classify] threshold, run extract"
+
+    result = run(workspace, mbox, "--thoroughness", "thorough")
+
+    assert "Audit finished." in result.stdout and "Reading: the lowest band with a hit" in result.stdout
+    assert advice not in result.stdout
+    audit = workspace.run("audit", "--mailbox", str(mbox))
+    assert audit.returncode == 0, audit.stderr
+    assert advice in audit.stdout

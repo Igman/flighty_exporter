@@ -36,6 +36,7 @@ from pathlib import Path
 from ..config import Config
 from ..output.review import build_flight_list
 from ..store import Store
+from ..threshold import effective_threshold
 
 # Session values.
 STARTED_MAILBOX = "started_with_mailbox"
@@ -46,7 +47,6 @@ STARTED_EXTRACTION_MODEL = "started_with_extraction_model"
 STARTED_THRESHOLD = "started_with_threshold"  # JSON number
 STARTED_AT = "started_at"  # set only when this version created the store
 LAST_ACTIVE = "last_active"
-EFFECTIVE_THRESHOLD = "effective_threshold"  # the threshold Thorough lowered to, if any
 
 # What each written file is.
 REVIEW_TABLE = "review table"
@@ -84,8 +84,10 @@ class SessionDescription:
     started_at: str | None  # ISO 8601 UTC; None for a store created before sessions were recorded
     last_active: str | None  # ISO 8601 UTC; None if never recorded
     # Progress, derived from the store with the configured models and the
-    # threshold in use (the configured one, or the session's effective one if lower).
+    # threshold in use (``threshold.effective_threshold``: the configured one,
+    # or the session's effective one if lower).
     threshold_used: float
+    threshold_configured: float  # the config's [classify] threshold now
     messages: int  # messages recorded
     classified: int  # by the configured decision model
     resolved_from_markup: int  # read from the message's own machine-readable data
@@ -162,7 +164,7 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
         mailbox = Path(value(STARTED_MAILBOX)) if value(STARTED_MAILBOX) else None
         names = value(STARTED_NAMES)
         threshold = value(STARTED_THRESHOLD)
-        threshold_used = _threshold_in_use(config, value(EFFECTIVE_THRESHOLD))
+        threshold_used = effective_threshold(config, store)
         candidates = store.extraction_candidates(config.decision_model, threshold_used)
         extracted = len(set(candidates) & store.extracted_ids(config.extraction_model))
         classified = len(store.classified_ids(config.decision_model))
@@ -170,7 +172,7 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
         # An empty download address: the cached reference data is used if
         # present, and nothing is fetched (the code checks do not change the
         # flight list).
-        flight_list = build_flight_list(replace(config, threshold=threshold_used, export_data_url=""), store)
+        flight_list = build_flight_list(replace(config, export_data_url=""), store)
         files = tuple(WrittenFile(kind, path, at) for kind, path, at in store.written_files() if path.exists())
         counts = store.row_counts()
         files_known = value(STARTED_AT) is not None
@@ -186,6 +188,7 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
             started_at=value(STARTED_AT),
             last_active=value(LAST_ACTIVE),
             threshold_used=threshold_used,
+            threshold_configured=config.threshold,
             messages=counts["messages"],
             classified=classified,
             resolved_from_markup=markup,
@@ -198,15 +201,6 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
             files_known=files_known,
             would_lose=_would_lose(counts, len(files)),
         )
-
-
-def _threshold_in_use(config: Config, effective: str | None) -> float:
-    if effective is None:
-        return config.threshold
-    try:
-        return min(config.threshold, float(effective))
-    except ValueError:
-        return config.threshold
 
 
 def _would_lose(counts: dict[str, int], files: int) -> tuple[str, ...]:
@@ -308,8 +302,10 @@ def format_description(description: SessionDescription) -> str:
         f"  flights with a saved decision: {d.flights_with_decision}",
         f"  state:                      {state}",
     ]
-    if d.threshold_used != d.threshold:
-        lines.append(f"  threshold in use:           {d.threshold_used}")
+    in_use = f"{d.threshold_used:g}"
+    if d.threshold_used < d.threshold_configured:
+        in_use += f" (lowered for this session from the configured {d.threshold_configured:g})"
+    lines.append(f"  threshold in use:           {in_use}")
     lines.append("Files written:")
     lines += [f"  {f.kind}: {f.path}" for f in d.files] or ["  none"]
     if not d.files_known:

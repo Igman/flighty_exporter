@@ -303,7 +303,12 @@ def _record_pdf_attachments(
 # -- report ------------------------------------------------------------------------
 
 
-def format_report(result: AuditResult, config: Config, store: Store, output: Path) -> str:
+def format_report(
+    result: AuditResult, config: Config, store: Store, output: Path, *, advice: bool = True
+) -> str:
+    """The audit's printed report. ``advice`` adds the closing line on what
+    to do next by hand (lower the threshold, then run extract); a Thorough
+    ``run``, whose include stage follows at once, leaves it out."""
     ex = result.extraction
     sent = ex.extracted + ex.failed
     threshold = effective_threshold(config, store)
@@ -354,13 +359,16 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
             )
 
     lines += ["", _reading(result, threshold)]
-    lines.append(
-        "The config was not changed. After lowering [classify] threshold, run extract: messages the audit "
-        "already extracted are not sent again."
-    )
+    if advice:
+        lines.append(AUDIT_ADVICE)
     lines.append(f"Audit table written to {output}")
     return "\n".join(lines)
 
+
+AUDIT_ADVICE = (
+    "The config was not changed. After lowering [classify] threshold, run extract: messages the audit "
+    "already extracted are not sent again."
+)
 
 _HEADER = ("band", "messages", "sampled", "failed", "with segments", "hit rate", "est. flight emails")
 _WIDTHS = (16, 10, 9, 8, 15, 10, 20)
