@@ -26,6 +26,10 @@ Tables (extended by later passes):
 - ``failures``: the latest failure per message and pass.
 - ``review_tables``: a hash of each review table as review last wrote it, so
   that an edited table is not overwritten.
+- ``message_texts``: the text a reviewer reads for each message that yielded
+  an extraction record (from the model or from markup): sender, subject,
+  date, cleaned body and readable PDF text, uncut. Replaced whenever the
+  message is extracted or resolved again; never saved for other messages.
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ from pathlib import Path
 
 from .flights.records import MARKUP_SOURCE, Decision, Extraction, ExtractionRecord
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # The passes that record failures, as named in the ``failures`` table.
 CLASSIFY_PASS = "classify"
@@ -91,6 +95,11 @@ CREATE TABLE IF NOT EXISTS review_tables (
     path TEXT PRIMARY KEY,
     sha256 TEXT NOT NULL,
     written_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS message_texts (
+    message_id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    saved_at TEXT NOT NULL
 );
 """
 
@@ -351,6 +360,22 @@ class Store:
                 "INSERT OR REPLACE INTO failures (message_id, pass, reason, recorded_at) VALUES (?, ?, ?, ?)",
                 (message_id, pass_name, reason, _now()),
             )
+
+    # -- saved message text -------------------------------------------------------
+
+    def save_message_text(self, message_id: str, text: str) -> None:
+        """Save (or replace) the text of a message that yielded a record."""
+        with self._write():
+            self._db.execute(
+                "INSERT OR REPLACE INTO message_texts (message_id, text, saved_at) VALUES (?, ?, ?)",
+                (message_id, text, _now()),
+            )
+
+    def message_text(self, message_id: str) -> str | None:
+        """The saved text of a message, None if none was saved (for example
+        a record extracted before text was saved)."""
+        row = self._db.execute("SELECT text FROM message_texts WHERE message_id = ?", (message_id,)).fetchone()
+        return row[0] if row else None
 
     def commit(self) -> None:
         if not self._held:

@@ -10,7 +10,9 @@ including ones a model classified in an earlier run; from then on the markup
 record takes precedence over any model extraction for that message.
 
 Every message recorded in the store is recorded with its position in the
-mailbox file, so that extract and audit can read it directly.
+mailbox file, so that extract and audit can read it directly. A message
+resolved from markup has its text saved for review, as extract saves it
+(PDF attachments are read for this, and only for this).
 
 The threshold is never applied here; it only selects messages for extraction.
 """
@@ -74,7 +76,7 @@ def run_classify(
             elif entry.identifier in resolved:
                 summary.already_resolved_from_markup += 1
                 progress.advance()
-            elif _resolve_from_markup(entry, position, store):
+            elif _resolve_from_markup(entry, position, store, mbox):
                 resolved.add(entry.identifier)
                 summary.resolved_from_markup += 1
                 progress.advance()
@@ -103,13 +105,22 @@ def _record_message(message: Message, position: int, store: Store) -> None:
     )
 
 
-def _resolve_from_markup(message: Message, position: int, store: Store) -> bool:
+def _resolve_from_markup(message: Message, position: int, store: Store, mbox: Mailbox) -> bool:
     record = parse_markup(message.html_parts, message.calendar_texts)
     if record is None:
         return False
     _record_message(message, position, store)
     store.save_markup(message.identifier, record)
+    store.save_message_text(message.identifier, _with_pdf_text(message, position, mbox).full_text())
     return True
+
+
+def _with_pdf_text(message: Message, position: int, mbox: Mailbox) -> Message:
+    """The message with its PDF text read (classify reads none), for the saved text."""
+    if not message.has_pdf_attachment:
+        return message
+    entry = mbox.entry_at(position, read_pdfs=True)
+    return entry if isinstance(entry, Message) and entry.identifier == message.identifier else message
 
 
 def _classify_one(

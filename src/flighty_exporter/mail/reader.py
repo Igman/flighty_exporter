@@ -91,6 +91,15 @@ class Message:
     calendar_texts: tuple[str, ...] = field(default=())
     has_pdf_attachment: bool = False
 
+    def full_text(self) -> str:
+        """The message as a reader sees it: sender, subject and date, the
+        cleaned body, then the text of each PDF attachment that was read
+        under a delimiter line naming the file. Uncut."""
+        text = f"From: {self.sender}\nSubject: {self.subject}\nDate: {self.date}\n\n{self.body}"
+        for attachment in self.pdf_texts:
+            text += f"\n\n----- PDF attachment: {attachment.filename} -----\n{attachment.text}"
+        return text
+
 
 @dataclass(frozen=True)
 class Skipped:
@@ -144,10 +153,13 @@ class Mailbox:
         for start, stop in self._index():
             yield start, read_entry(self._raw(start, stop), read_pdfs=self.read_pdfs)
 
-    def entry_at(self, position: int) -> Entry | None:
-        """The entry at ``position``, or None if no entry starts there."""
+    def entry_at(self, position: int, *, read_pdfs: bool | None = None) -> Entry | None:
+        """The entry at ``position``, or None if no entry starts there.
+        ``read_pdfs`` overrides the mailbox's setting for this entry."""
         bounds = self._bounds_at(position)
-        return None if bounds is None else read_entry(self._raw(*bounds), read_pdfs=self.read_pdfs)
+        if bounds is None:
+            return None
+        return read_entry(self._raw(*bounds), read_pdfs=self.read_pdfs if read_pdfs is None else read_pdfs)
 
     def identifier_at(self, position: int) -> str | None:
         """The identifier of the message at ``position``, read from its

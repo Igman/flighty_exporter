@@ -66,7 +66,7 @@ private and never commit them:
 | File | Written by | Default name |
 | --- | --- | --- |
 | Your config (paths, name variants) | you | `flighty_exporter.toml` |
-| The store: every pass's results (SQLite) | `classify`, `extract`, `audit` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
+| The store: every pass's results, and the text of the emails flights came from (SQLite) | `classify`, `extract`, `audit` | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
 | The review table | `review` | `review.csv` |
 | The failures file | `review` | `failures.csv` |
 | The audit table | `audit` | `audit.csv` |
@@ -406,6 +406,25 @@ it overwrites the table only if you have not changed it since; if you have
 edited it, it stops with an error rather than lose your edits. Use
 `--force` to overwrite it anyway, or `--output FILE` to write elsewhere.
 
+**Reading a flight's emails.** `extract` (and `classify`, for messages with
+machine-readable flight data) saves in the store the text of every email that
+yielded a flight record: sender, subject, date, the cleaned body and the text
+of readable PDF attachments. Only those emails, never the whole mailbox. To
+check a flight against its emails, without the mbox file:
+
+```
+uv run flighty-exporter sources                                 # every flight review lists
+uv run flighty-exporter sources --flight 2025-05-12 ZZ1234      # one flight
+uv run flighty-exporter sources --flight 2025-05-12 ZZ1234 --no-text   # just its emails' dates and subjects
+```
+
+It prints each flight (date, flight number, route), then each source email's
+date and subject followed by its saved text. For a flight with no flight
+number, give its route instead (`--flight 2025-05-12 LIS-OSL`). Flights
+extracted by an earlier version of the tool show
+`source text unavailable (extracted before text was saved)`; extracting them
+again (for example with another extraction model) saves the text.
+
 ### 5. Edit the review table
 
 Open `review.csv` in a spreadsheet (Numbers, Excel, LibreOffice). For each row:
@@ -690,7 +709,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, and `connection` (the shared HTTP opener and the errors that stop a pass). |
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`. |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
-| `output/` | What the user gets at the end: `review`, `export`, and `openflights` (the import file format and reference data). |
+| `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
 
 The dependency rule, enforced by `tests/test_layout.py`:

@@ -1,7 +1,8 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
-``extract``, ``review``, ``audit`` and ``export``.
+``extract``, ``review``, ``audit`` and ``export``; ``sources`` lists the
+saved text of each flight's source emails.
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
@@ -24,7 +25,7 @@ from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
 from .ollama.extraction import ExtractionClient
 from .ollama.preflight import PREFLIGHT_TIMEOUT, check_address, check_server
-from .output import export, review
+from .output import export, review, sources
 from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
@@ -308,6 +309,40 @@ COMMANDS["export"] = (
     "turn the kept rows of the edited review table into an import file for Flighty and a manual-add list",
     _export_arguments,
     cmd_export,
+)
+
+
+def cmd_sources(args: argparse.Namespace, config: Config) -> int:
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    choice = sources.FlightChoice(*args.flight) if args.flight else None
+    with Store(store_path) as store:
+        try:
+            print(sources.format_sources(config, store, choice, with_text=not args.no_text))
+        except sources.NoSuchFlight as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+    return EXIT_OK
+
+
+def _sources_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    parser.add_argument(
+        "--flight",
+        nargs=2,
+        metavar=("DATE", "FLIGHT"),
+        help="list only the flight on DATE (YYYY-MM-DD) with flight number FLIGHT "
+        "(or route ORIGIN-DESTINATION for a flight without a number)",
+    )
+    parser.add_argument("--no-text", action="store_true", help="list the source emails without their text")
+
+
+COMMANDS["sources"] = (
+    "list each flight review would list with its source emails and their saved text (needs only the store)",
+    _sources_arguments,
+    cmd_sources,
 )
 
 

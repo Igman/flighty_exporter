@@ -124,6 +124,61 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
                 "review with this store). Overwriting it would lose your edits; pass --force to overwrite "
                 "it anyway, or --output to write elsewhere."
             )
+    built = flight_list(config, store)
+    flights, result, sources, failures = built.flights, built.consolidation, built.sources, built.failures
+    unread_attachments, codes_not_checked = built.unread_attachments, built.codes_not_checked
+    rows = [_row(flight) for flight in flights]
+
+    reasons: Counter[str] = Counter()
+    unknown_codes: dict[str, set[str]] = {}
+    for flight in flights:
+        reasons.update({reason_kind(reason) for reason in flight.attention})
+        for reason in flight.attention:
+            kind = reason_kind(reason)
+            if kind in (UNKNOWN_AIRPORT, UNKNOWN_AIRLINE):
+                unknown_codes.setdefault(kind, set()).add(reason[len(kind) + 1:])
+
+    write_csv(review_path, REVIEW_COLUMNS, rows)
+    store.record_review_table(review_path, file_hash(review_path))
+    write_csv(failures_path, FAILURE_COLUMNS, failures)
+    return ReviewSummary(
+        review_path,
+        failures_path,
+        flights=len(rows),
+        confirmed=sum(1 for f in flights if f.evidence == CONFIRMED),
+        booked_only=sum(1 for f in flights if f.evidence == BOOKED_ONLY),
+        bookings_cancelled=result.bookings_cancelled,
+        bookings_replaced=result.bookings_replaced,
+        messages=len(sources),
+        messages_without_segments=sum(1 for s in sources if not s.record.segments),
+        failures=len(failures) - unread_attachments,
+        unread_attachments=unread_attachments,
+        passenger_filtering=bool(config.passenger_names),
+        needs_attention=sum(1 for f in flights if f.attention),
+        not_kept=sum(1 for f in flights if f.blocked),
+        reasons=reasons,
+        unknown_codes={kind: sorted(codes) for kind, codes in unknown_codes.items()},
+        codes_not_checked=codes_not_checked,
+        dropped_bookings=result.dropped_bookings,
+    )
+
+
+@dataclass
+class FlightList:
+    """The flights review lists, and what they were built from."""
+
+    flights: list[Flight]  # consolidated and checked, in review table order
+    consolidation: Consolidation
+    sources: list[SourceRecord]  # every extraction record consolidated
+    failures: list[dict[str, str]]  # rows of the failures file
+    unread_attachments: int
+    codes_not_checked: str | None  # why codes were not checked, None if they were
+
+
+def flight_list(config: Config, store: Store) -> FlightList:
+    """The flight list from the store, as review builds it (see the module
+    docstring): selection by threshold, consolidation with passenger
+    filtering, and checks. Shared by review and sources."""
     selected = store.extraction_candidates(config.decision_model, config.threshold)
     records = store.extraction_records(config.extraction_model)
     markup_records = store.extraction_records(MARKUP_SOURCE)
@@ -164,40 +219,7 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
         except ReferenceDataError as exc:
             codes_not_checked = str(exc)
     flights = check_flights(result.flights, reference, config.review_min_confidence)
-    rows = [_row(flight) for flight in flights]
-
-    reasons: Counter[str] = Counter()
-    unknown_codes: dict[str, set[str]] = {}
-    for flight in flights:
-        reasons.update({reason_kind(reason) for reason in flight.attention})
-        for reason in flight.attention:
-            kind = reason_kind(reason)
-            if kind in (UNKNOWN_AIRPORT, UNKNOWN_AIRLINE):
-                unknown_codes.setdefault(kind, set()).add(reason[len(kind) + 1:])
-
-    write_csv(review_path, REVIEW_COLUMNS, rows)
-    store.record_review_table(review_path, file_hash(review_path))
-    write_csv(failures_path, FAILURE_COLUMNS, failures)
-    return ReviewSummary(
-        review_path,
-        failures_path,
-        flights=len(rows),
-        confirmed=sum(1 for f in flights if f.evidence == CONFIRMED),
-        booked_only=sum(1 for f in flights if f.evidence == BOOKED_ONLY),
-        bookings_cancelled=result.bookings_cancelled,
-        bookings_replaced=result.bookings_replaced,
-        messages=len(sources),
-        messages_without_segments=sum(1 for s in sources if not s.record.segments),
-        failures=len(failures) - unread_attachments,
-        unread_attachments=unread_attachments,
-        passenger_filtering=bool(config.passenger_names),
-        needs_attention=sum(1 for f in flights if f.attention),
-        not_kept=sum(1 for f in flights if f.blocked),
-        reasons=reasons,
-        unknown_codes={kind: sorted(codes) for kind, codes in unknown_codes.items()},
-        codes_not_checked=codes_not_checked,
-        dropped_bookings=result.dropped_bookings,
-    )
+    return FlightList(flights, result, sources, failures, unread_attachments, codes_not_checked)
 
 
 def _row(flight: Flight) -> dict[str, str]:

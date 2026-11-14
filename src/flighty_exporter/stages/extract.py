@@ -14,7 +14,8 @@ mailbox is scanned once, reading only headers, and the positions found are
 recorded for every message the store holds, so the scan is not repeated.
 Messages are extracted in mailbox order. The text layer of PDF attachments is read here (never at classify time). A PDF
 that cannot be read is recorded as an attachment note for the failures file;
-it does not make the message fail.
+it does not make the message fail. The text of each message that yields a
+record is saved with it (``Message.full_text``), for review.
 """
 
 from __future__ import annotations
@@ -153,6 +154,7 @@ def _extract_one(message: Message, store: Store, client: ExtractionClient, summa
         summary.failures.append((message.identifier, str(exc)))
         return
     store.save_extraction(message.identifier, extraction)
+    store.save_message_text(message.identifier, message.full_text())
     summary.extracted += 1
     summary.retries += extraction.attempts - 1
     summary.inputs_truncated += extraction.input_truncated
