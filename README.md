@@ -177,6 +177,14 @@ uv run flighty-exporter review
 uv run flighty-exporter export
 ```
 
+![Data flow between the five commands: the mbox file feeds classify, extract and audit, which read and write the store; review reads the store and writes review.csv; export reads review.csv and writes the import file for Flighty.](docs/pipeline.svg)
+
+The commands never call each other. Everything passes through two hand-offs:
+the store (one SQLite file), which carries results from `classify` to
+`extract`, `audit` and `review`; and the review table (`review.csv`), which
+carries your decisions from `review` to `export`. Dashed arrows show that
+`extract` and `audit` go back to the mbox for message bodies.
+
 `uv run` installs everything on first use, so after installing uv and Ollama
 this is the only command you need. Every model command can be stopped with
 Ctrl-C and resumed by running it again: each result is saved as soon as it is

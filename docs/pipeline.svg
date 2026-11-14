@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" role="img" aria-labelledby="title desc">
+  <title id="title">Data flow between the five commands</title>
+  <desc id="desc">The mbox file feeds classify, extract and audit. Those three read and write the store, a single SQLite file. Review reads the store and writes review.csv, which you edit. Export reads review.csv and writes the import file for Flighty.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0L10 5L0 10z"/>
+    </marker>
+  </defs>
+  <style>
+    .cmd { fill: #fdfcf8; stroke: #1f1d1a; stroke-width: 1.4; }
+    .store { fill: #e2ecf5; stroke: #2f5d8a; stroke-width: 1.4; }
+    .file { fill: #f4eed6; stroke: #6a5a1e; stroke-width: 1.2; }
+    .lbl { font: 600 15px ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif; fill: #1f1d1a; text-anchor: middle; }
+    .sub { font: 12px ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif; fill: #6b665e; text-anchor: middle; }
+    .slbl { font: 600 13px ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif; fill: #2f5d8a; text-anchor: middle; }
+    .flbl { font: 600 13px ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif; fill: #6a5a1e; text-anchor: middle; }
+    .ln { stroke: #6b665e; stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
+    .dash { stroke-dasharray: 4 4; }
+    .head { fill: #6b665e; }
+    @media (prefers-color-scheme: dark) {
+      .cmd { fill: #171614; stroke: #ece8df; }
+      .store { fill: #1e2c3a; stroke: #8fbbe6; }
+      .file { fill: #33301f; stroke: #d9c877; }
+      .lbl { fill: #ece8df; }
+      .sub { fill: #a39d92; }
+      .slbl { fill: #8fbbe6; }
+      .flbl { fill: #d9c877; }
+      .ln { stroke: #a39d92; }
+      .head { fill: #a39d92; }
+    }
+  </style>
+
+  <rect class="file" x="10" y="20" width="110" height="46" rx="4"/>
+  <text class="flbl" x="65" y="40">mbox file</text>
+  <text class="sub" x="65" y="56">your mail</text>
+
+  <rect class="cmd" x="160" y="20" width="110" height="46" rx="4"/>
+  <text class="lbl" x="215" y="40">classify</text>
+  <text class="sub" x="215" y="56">decision model</text>
+
+  <rect class="cmd" x="325" y="20" width="110" height="46" rx="4"/>
+  <text class="lbl" x="380" y="40">extract</text>
+  <text class="sub" x="380" y="56">extraction model</text>
+
+  <rect class="cmd" x="490" y="20" width="110" height="46" rx="4"/>
+  <text class="lbl" x="545" y="40">audit</text>
+  <text class="sub" x="545" y="56">optional</text>
+
+  <rect class="store" x="160" y="130" width="440" height="56" rx="4"/>
+  <text class="slbl" x="380" y="153">the store (one SQLite file)</text>
+  <text class="sub" x="380" y="172">messages · classifications · extractions · failures</text>
+
+  <rect class="cmd" x="160" y="250" width="110" height="46" rx="4"/>
+  <text class="lbl" x="215" y="270">review</text>
+  <text class="sub" x="215" y="286">no model</text>
+
+  <rect class="file" x="325" y="250" width="110" height="46" rx="4"/>
+  <text class="flbl" x="380" y="270">review.csv</text>
+  <text class="sub" x="380" y="286">you edit this</text>
+
+  <rect class="cmd" x="490" y="250" width="110" height="46" rx="4"/>
+  <text class="lbl" x="545" y="270">export</text>
+  <text class="sub" x="545" y="286">no model</text>
+
+  <rect class="file" x="640" y="250" width="110" height="46" rx="4"/>
+  <text class="flbl" x="695" y="270">import file</text>
+  <text class="sub" x="695" y="286">for Flighty</text>
+
+  <path class="ln" d="M120 43H158"/>
+  <path class="ln dash" d="M65 66V100H380V68"/>
+  <path class="ln dash" d="M380 100H545V68"/>
+
+  <path class="ln" d="M215 66V128"/>
+  <path class="ln" d="M365 128V68"/>
+  <path class="ln" d="M395 66V128"/>
+  <path class="ln" d="M530 128V68"/>
+  <path class="ln" d="M560 66V128"/>
+
+  <path class="ln" d="M215 186V248"/>
+  <path class="ln" d="M270 273H323"/>
+  <path class="ln" d="M435 273H488"/>
+  <path class="ln" d="M600 273H638"/>
+</svg>
