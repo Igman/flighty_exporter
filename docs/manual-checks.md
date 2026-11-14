@@ -1,470 +1,347 @@
 # Manual checks
 
-The application's screens are kept thin and are checked by hand, not by the
-test suite (see the spec, issue #15, "Testing Decisions"). Before a release,
-or after changing a screen, work through that screen's list in a real
-terminal. Each step says what to do and what you should see.
+The application's screens are kept free of logic and checked by hand, not by
+the test suite (see the spec, issue #15, "Testing Decisions"). Before a
+release, or after changing a screen, walk the sections below in a real
+terminal, in order: they follow the screens as a user meets them. Each step
+says what to do and what you should see. Record each walk in
+[Recorded walkthroughs](#recorded-walkthroughs).
 
-Use invented mail for these checks: `test.mbox` (with `[passenger] names =
-["Jordan Ellis"]`) and a local Ollama with the configured models pulled.
-Start from a folder holding a config file like:
+## Before you start
+
+**A scratch folder.** Work in an empty folder outside the repository, with a
+copy of the synthetic mailbox (invented mail only), and run the tool from
+there through the repository's environment:
+
+```
+mkdir -p ~/scratch/flighty-check && cd ~/scratch/flighty-check
+cp /path/to/flighty_exporter/test.mbox .
+alias fe='uv run --project /path/to/flighty_exporter flighty-exporter'
+```
+
+`fe` opens the application; `fe session`, `fe flights` and so on run the
+commands against the same files. Every file the tool writes lands in this
+folder. A config file for the checks, once setup has written one, looks
+like:
 
 ```toml
 mailbox = "test.mbox"
-store = "check.db"
 
 [passenger]
 names = ["Jordan Ellis"]
+
+[run]
+thoroughness = "quick"
 ```
 
-(Setup writes such a file for you: `uv run flighty-exporter setup --mailbox
-test.mbox --name "Jordan Ellis"`, then add the `store` line.)
+To start a check from scratch, delete `flighty_exporter.toml`,
+`flighty_exporter.db*`, `review.csv`, `failures.csv`, `audit.csv`,
+`manual-add.csv` and `openflights-backup-*.csv` (or `fe run --fresh` with
+the config in place, which deletes only what the tool wrote).
 
-Delete `check.db`, `review.csv` and `failures.csv` to start a check from
-scratch.
+**Simulating server problems without touching your models.**
 
-## Startup prompt
+- *Model server not running:* set `[ollama] address = "http://localhost:9"`
+  (nothing listens there). Remove the line to bring the server back.
+- *A missing model:* set `[models] decision = "fictional-reader:3b"` (or
+  `extraction`). The name is not pulled, so the checks report it missing,
+  and a download attempt fails without fetching anything. To see a real
+  download, use a small model you are happy to have pulled.
+- *A non-local address:* set `[ollama] address = "http://192.0.2.10:11434"`
+  (a documentation address).
+- *An old server* can only be checked with an older Ollama at hand.
 
-Create a session first: launch, complete setup, let the run classify a few
-messages and press `q`.
+Never delete or re-pull your real models for these checks.
 
-1. **Unfinished session.** Launch again. The screen says a previous session
-   was found and shows, in a Session panel: the mailbox path, when the
-   session started and was last active (local time), the names and
-   thoroughness it was started with, how far it got (classify: N of M
-   recorded emails read; extract: N of M likely flight emails extracted;
-   review: flights and saved decisions; the threshold in use; files: how many
-   the session wrote that are still there), and "The run is unfinished" with
-   how many are still to extract. The footer offers `r Resume`, `f Start
-   fresh`, `q Quit`. The figures match `uv run flighty-exporter session`.
-2. **Resume an unfinished run.** Press `r`. The progress screen opens and
-   carries on: classify's counts start from where the last launch stopped,
-   and no finished message is sent to a model again.
-3. **Finished session.** Let a run finish, quit, launch again. The prompt
-   says "The run is complete. Resuming opens its review." and the `r` line
-   reads "open the finished run's review" (`session` prints "run finished:
-   yes"). Press `r`: the review screen opens at once, with no progress
-   screen and no model request, showing your saved decisions. If some
-   likely flight emails could not be read, the extract line says how many
-   and a line under "The run is complete." says the review lists them (`x`);
-   the session still counts as finished.
-4. **Complete but not finished.** Start a Thorough session and quit during
-   the audit stage. Launch: the prompt says "The run did not reach its end"
-   (`session` prints "state: complete" but "run finished: no"); `r` opens
-   the progress screen, which runs the audit and the remaining stages.
-5. **Threshold lowered.** After a Thorough run that lowered the threshold,
-   the prompt's threshold line reads like "0.02 (lowered for this session
-   from the configured 0.05)".
-6. **Mailbox moved, unfinished.** With an unfinished session, rename the
-   mailbox file and launch. The Mailbox line ends with "(no longer there)"
-   in red, and a paragraph explains that resuming reads the mailbox again
-   and would stop with "mailbox file not found": put the file back, or start
-   fresh. Pressing `r` anyway shows the progress screen with that error and
-   `r Retry`; rename the file back and press `r` there to carry on.
-7. **Mailbox moved, finished.** With a finished session, rename the
-   mailbox file and launch. The Mailbox line ends with "(no longer there)",
-   and a note says that does not matter for the review. `r` opens the
-   review; the source emails' text (`enter`) still shows.
-8. **Start fresh, cancelled.** Press `f`. A dialog asks "Start fresh?",
-   lists what would be lost (for example "classification of 200 emails",
-   "extraction of 31 emails", "2 generated files") and says that the
-   mailbox, the config file, downloaded models and the cached reference data
-   are never deleted. Press `n` (or Escape): the dialog closes and nothing is
-   deleted (`check.db` is still there).
-9. **Start fresh, confirmed.** Press `f`, then `y`. Setup opens with a
-   green-bordered notice at the top: "Started fresh." and one line per file
-   deleted (review table, failures file, the store). `check.db`,
-   `review.csv` and `failures.csv` are gone; the mailbox and config file are
-   not. The three answers are filled in with the ones the session was
-   started with.
-10. **Quit.** On the prompt, `q` quits with status `0`.
+**What to expect from `test.mbox`.** With `names = ["Jordan Ellis"]`, a
+Quick run with the default models finds 7 flights: 2017-10-05 IB3170
+MAD-BCN, 2018-07-22 AC759 YYZ-SFO, 2019-03-14 UA328 SFO-ORD, 2021-09-02
+BA286 SFO-LHR (confirmed), 2021-09-16 BA285 LHR-SFO, 2022-05-20 LH455
+SFO-FRA and 2022-05-21 LH1238 FRA-VIE. `test.mbox.truth.json` lists the flight
+emails behind them. Model output varies a little between versions; note any
+difference in the walkthrough record.
 
-## Guided setup
+## 1. Launching
 
-Start from a folder with no store. Delete or rename the config file for the
-first check.
+1. **Not a terminal.** `fe | cat` and `fe < /dev/null` do not open the
+   application: each prints the usage line and "error: the following
+   arguments are required: command" on stderr and exits with status `2`.
+2. **Help.** `fe --help` lists every command; each `fe <command> --help`
+   matches the [command reference](../README.md#command-reference).
 
-1. **No config, no session.** Launch. Setup opens: "Setup: three questions",
-   the config file's path, then three numbered questions, each with its
-   explanation, a "You entered" summary and a "Save and check the model
-   server (Ctrl-S)" button. The mailbox field is empty and focused, the
-   names field is empty, Quick is selected. The footer shows `^s Save and
-   continue`.
-2. **Mailbox explanation.** Under "1. Your mailbox file": what file it is
-   (the .mbox from Gmail Takeout, usually `Takeout/Mail/All mail Including
-   Spam and Trash.mbox`), that dragging the file into the terminal pastes
-   its path, and the folder a relative path is read from.
-3. **Bad mailbox paths.** Type each of these and press Tab to leave the
-   field; a red message appears under the field each time, and nothing is
-   written:
+## 2. Guided setup
+
+Start from the empty scratch folder (no config, no store).
+
+1. **First screen.** `fe` opens "Setup: three questions", with the config
+   file's path on a line of its own (broken after a `/` if long, not in the
+   middle of a name), three numbered questions with explanations, a "You
+   entered" panel and a "Save and check the model server (Ctrl-S)" button.
+   The mailbox field is empty and focused, the names are empty, Quick is
+   selected; the footer shows `^s Save and continue`.
+2. **Mailbox explanation.** Under "1. Your mailbox file": the Takeout
+   `.mbox` file, that dragging it into the terminal pastes its path, and the
+   folder a relative path is read from, on its own line.
+3. **Bad mailbox paths.** Type each and press Tab; a red message appears
+   under the field and nothing is written:
    - a path that does not exist: "There is no file at …";
    - a folder: "… is a folder, not a file. Point at the mailbox (.mbox) file
      itself.";
-   - the unzipped `Takeout` folder: "… is a Google Takeout folder, not a
-     file. Point at the .mbox file inside it: …/All mail Including Spam and
-     Trash.mbox.";
-   - the Takeout `.zip`: "… is a zip archive, not a mailbox … unzip it, then
-     point at the .mbox file inside";
-   - a text file: "… does not look like an mbox file … this file begins with
-     …".
+   - an unzipped `Takeout` folder holding an .mbox: "… is a Google Takeout
+     folder, not a file. Point at the .mbox file inside it: …";
+   - a `.zip` file: "… is a zip archive, not a mailbox …";
+   - an empty file: "… is empty …";
+   - a text file: "… does not look like an mbox file … this file begins
+     with …".
+
    Typing in the field clears the message. Ctrl-S with a bad path shows the
    message, focuses the field and stays on setup.
-4. **Drag and drop.** Drag the mbox file from Finder into the terminal: the
+4. **Drag and drop.** Drag `test.mbox` from Finder into the field: the
    pasted path (quoted, or with `\ ` before spaces) is accepted.
-5. **Name variants.** Under "2. Your name variants": why names are asked,
-   one per line or comma-separated, that "ELLIS/JORDAN MR" already matches
-   "Jordan Ellis", the example "Jordan Ellis, Jordan A. Ellis", and in bold
-   that leaving it empty turns passenger filtering off and every booking is
-   kept. Type `Jordan Ellis` and `Jordan A. Ellis` on two lines: the summary
-   lists both. Type `Mr` as a line and press Ctrl-S: a red message under the
-   field says "'Mr' is not a name" and nothing is written.
-6. **Empty names.** Leave the names empty: the summary reads "Name variants:
-   none: passenger filtering is off, every booking is kept".
-7. **Thoroughness.** Under "3. How thorough to be": Quick and Thorough, with
-   one sentence each below: Quick is the fastest; Thorough checks for missed
-   flight emails after extraction, roughly 2 to 35 minutes more, and can
-   lower the threshold for the session within the `[audit]
-   auto_include_budget` (shown as a number of emails). Select Thorough with
-   the arrow keys and Space or Enter: the summary says "Thoroughness:
-   Thorough".
-8. **Summary.** The "You entered" panel always shows the mailbox, the names
-   and thoroughness as entered, and that changing one later means starting
-   fresh.
-9. **Save.** With `test.mbox`, `Jordan Ellis` and Thorough, press Ctrl-S.
-   The model-server step opens. The config file now exists with `mailbox =
-   "test.mbox"` (relative, as the file is in the config file's folder),
-   `[passenger] names = ["Jordan Ellis"]` and `[run] thoroughness =
-   "thorough"`, under a three-line comment saying setup wrote it.
-10. **Existing config kept.** Put back a config file with comments and other
-    settings (e.g. a copy of `flighty_exporter.example.toml` with
-    `store = "check.db"`), delete the store and launch. Setup is filled in
-    from it and the Save button is focused: press Enter. Compare the file
-    with the copy: only the `mailbox` line (added under the commented-out
-    example), `names` and `thoroughness` changed.
-11. **Server ready.** With Ollama running and both models pulled, the
-    model-server step shows "On this machine: yes", "Reachable: yes", the
-    version with "(new enough)", each model "ready", and "Ready. Press s to
-    start the run." Press `s`: the progress screen opens with the
-    thoroughness chosen in setup.
-12. **Server not running.** Quit Ollama, launch and save. The step shows
-    "Reachable: no" and a Problem panel with the commands' message ("… is
-    not reachable … Start it with `ollama serve`, or open the Ollama app,
-    then rerun the check (press c).") and "Press c to check again once it is
-    fixed." The footer offers `c Check again`, not `s`. Start Ollama, press
-    `c`: the panel goes away and the step reports the server.
-13. **Server too old.** (Only if an older Ollama is at hand.) The Version
-    line reads "(too old)" and the Problem panel gives the commands' "needs
-    Ollama 0.35.0 or later" message with `c Check again`.
-14. **Non-local address.** Set `[ollama] address =
-    "http://192.0.2.10:11434"` in the config and launch. "On this machine:
-    no", and the Problem panel shows the refusal ("email content would leave
-    this machine") followed by the same guidance as the progress screen
-    (`--allow-remote` does not apply in the application; change the config
-    and start again). Only `b` and `q` are offered.
-15. **Missing model.** Configure a small model you do not have (e.g.
-    `[models] decision = "qwen3:0.6b"`) and launch. Its line reads "missing,
-    size not known until the download starts (press d)"; for a missing
-    default model it reads "about 9.3 GB" (`nimble`) or "about 8.0 GB"
-    (`gemma4:12b-it-q4_K_M`). Press `d`: a dialog asks "Download …?" with the
-    size; press `n` and check that nothing downloads (`ollama list`).
-16. **Download with progress.** Press `d`, then `y`. A "Downloading …"
-    panel shows a progress bar and "X of Y · pulling …", moving as the
-    download runs, then status texts such as "verifying sha256 digest". When
-    it finishes, a notice says it is downloaded and the step checks again;
-    the model reads "ready".
-17. **Download error.** Configure a model name that does not exist (e.g.
-    `fictional-reader:3b`), press `d`, `y`. The Problem panel shows the
-    server's error ("… could not pull fictional-reader:3b: …") and "Press d
-    to try again"; `d` and `c` are offered.
-18. **Quit during a download.** Start a large download and press `q`
-    while it runs. The application exits at once with status `0`; the
-    status line said beforehand that Ollama keeps what was downloaded.
-    Launch again and download again: Ollama resumes rather than starting
-    over.
-19. **Back to the answers.** On the model-server step, `b` returns to setup
-    with the saved answers filled in.
-20. **Commands.** `uv run flighty-exporter setup --mailbox test.mbox --name
-    "Jordan Ellis" --check` prints what it wrote and the server report;
-    `uv run flighty-exporter pull-models` lists missing models without
-    downloading.
+5. **Names.** Under "2. Your name variants": why names are asked, one per
+   line or comma-separated, that "ELLIS/JORDAN MR" already matches "Jordan
+   Ellis", the example, and in bold that empty turns passenger filtering
+   off. Type `Jordan Ellis` and `Jordan A. Ellis` on two lines: the summary
+   lists both. Add a line `Mr` and press Ctrl-S: "'Mr' is not a name" under
+   the field, nothing written. Empty names: the summary reads "none:
+   passenger filtering is off, every booking is kept".
+6. **Thoroughness.** Under "3. How thorough to be": Quick and Thorough with
+   a sentence each (Thorough: roughly 2 to 35 minutes more, and a lowered
+   threshold within the budget, shown as a number of emails). Select one
+   with the arrow keys and Space or Enter: the summary follows.
+7. **Save.** With `test.mbox`, `Jordan Ellis` and Quick, press Ctrl-S. The
+   model-server step opens, and `flighty_exporter.toml` exists with
+   `mailbox = "test.mbox"` (relative), `[passenger] names = ["Jordan
+   Ellis"]` and `[run] thoroughness = "quick"` under a comment saying setup
+   wrote it.
+8. **An existing config is kept.** With a copy of
+   `flighty_exporter.example.toml` as the config (and no store), launch:
+   setup is filled in from it and the Save button is focused; press Enter.
+   Only the `mailbox` line, `names` and `thoroughness` changed in the file.
+9. **Server ready.** With Ollama running and both models pulled: "On this
+   machine: yes", "Reachable: yes", the version "(new enough)", each model
+   "ready", and "Ready. Press s to start the run." `s` opens the progress
+   screen.
+10. **Server not running.** With the address pointed at `localhost:9`,
+    launch and save. "Reachable: no" and a Problem panel ("… is not
+    reachable … Start it with `ollama serve`, or open the Ollama app, then
+    rerun the check (press c).", then "Press c to check again once it is
+    fixed."); the footer offers `c`, not `s`. Restore the address, press `c`:
+    the panel goes and the server is reported.
+11. **Non-local address.** With the documentation address: "On this
+    machine: no", the refusal ("email content would leave this machine")
+    and the guidance that `--allow-remote` does not apply in the
+    application. Only `b` and `q` are offered.
+12. **Missing model.** With `[models] decision = "fictional-reader:3b"`: its
+    line reads "missing", says the size is not known until the download
+    starts, and "(press d)" (a missing default model shows "about 9.3 GB" or
+    "about 8.0 GB").
+    `d` asks "Download fictional-reader:3b?" with the size; `n` closes it and
+    nothing downloads (`ollama list` unchanged).
+13. **Download error.** `d`, then `y`: the Problem panel shows the server's
+    error ("… could not pull fictional-reader:3b: …") and "Press d to try
+    again"; `d` and `c` are offered.
+14. **Download progress** (only with a model you are happy to pull). `d`,
+    `y`: a "Downloading …" panel with a progress bar and "X of Y · pulling
+    …", then status texts; when done, a notice and a fresh check showing the
+    model "ready". `q` during a download quits at once (status `0`); a later
+    download resumes.
+15. **Back.** On the model-server step, `b` returns to setup with the saved
+    answers filled in.
 
-## Progress screen
+## 3. The run
 
-A launch with no store starts at setup: to reach the progress screen, press
-Ctrl-S on the prefilled setup screen and then `s` once the model server is
-ready. With an unfinished session, the startup prompt comes first: press `r`
-to resume.
+From the model-server step press `s` (or, with an unfinished session,
+resume from the startup prompt, section 6).
 
-1. **Start.** Run `uv run flighty-exporter` in a terminal. The screen fills
-   the terminal at once: the mailbox path and the thoroughness at the top, a
-   status line saying the run is running, and a Stages panel listing
-   classify, extract and review (plus any further stages the engine
-   announces, e.g. audit and include in Thorough mode), each "waiting" until
-   it starts. The footer shows `p Pause` and `q Quit`.
-2. **Progress updates.** While classify runs, its row reads "running" and a
-   Current stage panel shows a progress bar, "N of TOTAL messages", the
-   seconds per message ("rate not known yet" before the first model answer)
-   and the time remaining in words ("about 1 hour 20 minutes", "less than a
-   minute"). The numbers move after every message. Nothing else is printed
-   over the screen (no stray progress lines).
-3. **Counts.** The Counts panel shows, for classify: classified, resolved from
-   machine-readable data, skipped, failed; once extract starts, a second line:
-   "extracted N of M" (M being the messages selected for extraction) and
-   failed. They are the session's totals so far, not just this launch's: when
-   classify finishes, classified plus resolved plus skipped plus failed adds
-   up to the messages in the mailbox, and when extract finishes N equals M
-   less the failed ones.
-4. **Thorough stages.** Set `thoroughness = "thorough"` under `[run]` and
-   start from scratch. The header says "Thoroughness: thorough" and the
-   Stages panel lists five stages: classify, extract, audit, include,
-   review. During audit the progress panel shows the sampled messages being
-   sent; when audit finishes the Counts panel shows "audit: sampled S ·
-   extracted E of S · failed F". With `test.mbox` the audit usually finds no
-   flight emails below the threshold: include then reads "skipped", with the
-   reason on the line under it ("no flight emails found below the
-   threshold"), no progress bar appears for it, and the run goes on to
-   review. To see include run, use a mailbox where the audit finds flight
-   emails below the threshold (for example set `[classify] threshold` high,
-   such as 0.9, in a scratch copy): include shows a progress bar over the
-   newly included messages and finishes with "include: extracted N of N ·
-   flight emails F · failed 0" (or, if including them would exceed
-   `[audit] auto_include_budget`, include is skipped with that reason
-   under it). The report's "check for missed flight
-   emails" lines say what changed. Press `q` during audit: the application
-   closes after the message in progress, and the next launch carries on
-   with the audit's remaining messages.
-5. **Locating messages.** With a store from an earlier run and a mailbox that
-   has changed since (or a store made before message positions existed),
-   extract's panel first shows "Locating messages" and "N of TOTAL mailbox
-   entries scanned", then switches to one step per selected message.
-6. **Pause and continue.** Press `p` while a model stage runs. The status
-   line says "Pausing after the current message…", then "Paused. Press p to
-   continue."; the running stage reads "stopped" and the progress panel
-   disappears; the footer shows `p Continue`. Watch Ollama (e.g. Activity
-   Monitor, or `ollama ps`): no further requests are made. Press `p` again:
-   the run starts afresh, already-finished stages show "nothing to do" or
-   finish quickly, and the stage carries on from where it stopped: messages
-   already handled are skipped at once (the done count races past them) and
-   only the rest go to the model. The Counts panel keeps its figures while
-   paused and, once the stage has walked past the work done before the pause,
-   shows the same totals as before and goes on from there (for example
-   "classified 8" when paused, then 9, 10 … up to every message): no count
-   drops back to what this launch alone did.
-7. **Quit mid-run and resume on the next launch.** During extract, press `q`.
-   The status line says "Stopping after the current message… (press q again
-   to quit now)"; when that message is done the application closes and the
-   shell prompt returns. `echo $?` prints `0`. Run `uv run flighty-exporter`
-   again: classify shows "nothing to do", and extract continues with the
-   remaining messages only.
-8. **Quit at once.** During a slow model stage, press `q` and then `q` again
-   (or Ctrl-C) before the message finishes. The application closes
-   immediately with exit status `0`. Launch again: the run resumes; at most
-   the one message in progress is redone, and the store is not damaged
-   (`uv run flighty-exporter review --store check.db` still works).
-9. **Problem panel and retry.** Quit Ollama (or `ollama stop` / stop the
-   server) and launch. A red Problem panel shows the same message the `run`
-   command prints for an unreachable server (e.g. "cannot reach Ollama at
-   …"), the stage reads "stopped", and the footer offers `r Retry` and
-   `q Quit`. Start Ollama again and press `r`: the panel disappears and the
-   run continues. Repeat by stopping Ollama in the middle of extract: the
-   panel appears after the message in progress fails, and `r` continues once
-   Ollama is back, with nothing finished being sent again.
-10. **Model missing.** Set `[models] extraction` to a model you have not
-   pulled and launch: after classify, the Problem panel shows the existing
-   "pull it with `ollama pull …`" message. Pull it (or fix the name and
-   relaunch) and press `r`.
-11. **Non-local address.** Set `[ollama] address = "http://192.0.2.10:11434"`
-    and launch. The Problem panel shows the existing refusal message (email
-    content would leave this machine), followed by a line saying that in the
-    application `--allow-remote` does not apply and what to set in the config
-    file instead. No stage starts, and the footer offers only `q Quit` (no
-    retry: change the config and launch again). With
-    `allow_remote = true` under `[ollama]`, the run is attempted and the
-    warning appears in the Notices panel instead.
-12. **Finish and report.** Let a run complete. Every stage reads "done" or
-    "nothing to do", the progress panel is gone, and a Report panel shows the
-    same end-of-run report `uv run flighty-exporter run` prints (flights
-    found, needing attention, cancelled, replaced, dropped, failed messages,
-    files written, next step), followed by "Press enter to review the
-    flights, or q to quit.". The footer offers `⏎ Review flights` and
-    `q Quit`; `q` exits with status `0` (`enter` is covered under "Review
-    screen" below).
-13. **No mailbox.** Remove `mailbox` from the config (or point it at a file
-    that does not exist), delete the store, and launch. Setup opens instead
-    of the progress screen (see "Guided setup" above).
-14. **Non-terminal fallback.** Run `uv run flighty-exporter | cat` and
-    `uv run flighty-exporter < /dev/null`. Neither opens the application;
-    both print the usage line and "error: the following arguments are
-    required: command" on stderr, and exit with status `2`.
-15. **Narrow terminal.** Resize the terminal to about 50 columns by 24 rows
-    during a run. Text wraps inside the panels, nothing is cut off sideways,
-    and the screen scrolls (mouse wheel, or the keyboard) to reach the panels
-    below; the footer stays visible.
+1. **Start.** The screen shows "Mailbox:" with the path on its own line(s)
+   and the thoroughness, a status line, and a Stages panel listing classify,
+   extract and review (Thorough: classify, extract, audit, include, review),
+   each "waiting". Footer: `p Pause`, `q Quit`.
+2. **Progress.** The running stage reads "running"; a Current stage panel
+   shows a bar, "N of TOTAL messages", the seconds per message ("rate not
+   known yet" at first) and the time left in words. Nothing is printed over
+   the screen.
+3. **Counts.** Classify: classified, resolved from machine-readable data,
+   skipped, failed; extract: "extracted N of M" and failed. They are the
+   session's totals: after classify, the four add up to the messages in the
+   mailbox.
+4. **Pause and continue.** `p`: "Pausing after the current message…", then
+   "Paused. Press p to continue."; the stage reads "stopped" and no further
+   requests reach Ollama (`ollama ps`). `p` again: finished stages show
+   "nothing to do", the stage skips what is done and carries on; no count
+   drops back.
+5. **Quit and resume.** During extract press `q`: "Stopping after the
+   current message… (press q again to quit now)", then the application
+   closes with status `0`. The next launch shows the startup prompt (section
+   6); resume and extract continues with the remaining messages only.
+6. **Quit at once.** `q` twice (or `q` then Ctrl-C) during a model request:
+   the application closes immediately, status `0`; the store is intact
+   (`fe session` works) and at most one message is redone.
+7. **Problem and retry.** With the address at `localhost:9`, relaunch an
+   unfinished session and resume: a red Problem panel with the same message
+   `run` prints ("cannot reach Ollama at …" or "… is not reachable …"), the
+   stage "stopped", footer `r Retry`, `q Quit`. `r` shows the panel again
+   (the config is read at launch): quit, restore the address, relaunch. With
+   the real server instead, quit the Ollama app during extract: the panel
+   appears after the message in progress; start Ollama and press `r`: the
+   run carries on, nothing finished is sent again.
+8. **Model missing.** With `[models] extraction = "fictional-reader:3b"`,
+   after classify the Problem panel shows the "pull it with `ollama pull …`"
+   message.
+9. **Thorough stages.** A Thorough session lists five stages. During audit
+   the bar counts sampled messages; afterwards Counts shows "audit: sampled
+   S · extracted E of S · failed F". With `test.mbox` the include stage
+   either reads "skipped" with its reason under it, or runs over the newly
+   included messages; the report's "check for missed flight emails" line
+   then reads like "threshold lowered from 0.05 to 0.02 for this session; N
+   emails newly included by the lower threshold (A already read by the
+   check, R read now), F of them with flights" (fix d).
+10. **Finished.** Every stage "done" or "nothing to do"; a Report panel shows
+    the same report `fe run` prints (flights, needing attention, cancelled,
+    replaced, dropped, failed, files written) ending with "Next step: press
+    enter to review the flights (or q to quit)." and not with "then run
+    export" (fix a). Footer: `⏎ Review flights`, `q Quit`.
+11. **Narrow terminal.** At about 50 columns, text wraps inside the panels,
+    paths break after a `/`, nothing is cut off sideways, and the screen
+    scrolls; the footer stays.
 
-## Review screen
+## 4. The review
 
-Start from a finished run of `test.mbox` (see the progress screen's step
-12). With `[passenger] names = ["Jordan Ellis"]` some bookings are dropped as other
-passengers'; for an unreadable email, and for a flight with several source
-emails, look at the end-of-run report's counts and the `flights` command's
-output (`uv run flighty-exporter flights`), which lists the same flights in
-the same order.
+From a finished run, press `enter`. Compare with `fe flights`, which lists the
+same flights in the same order.
 
-1. **Opens only after a complete run.** Launch and press `p` during
-   classify: the footer offers no review key, and `enter` does nothing.
-   Make Ollama unreachable and launch: with the Problem panel showing,
-   `enter` does nothing. Let a run finish: the footer offers
-   `⏎ Review flights`; press `enter`. The review screen replaces the
-   progress screen.
-2. **Table, order and totals.** The table has the columns date, flight,
-   route, airline, booking, evidence, keep, corrected, reasons. Flights with
-   a blocking reason (reasons in red, e.g. "unknown airport", "low
-   confidence") come first, then flights with only advisory reasons (in
-   yellow, e.g. "no flight number"), then the rest, each group by date. The
-   first line shows "Flights: N · kept K · not kept M · needing attention
-   A", the same numbers `flights` prints; the second shows "Showing: all
-   flights (N of N flights)".
-3. **Detail panel.** Move with the arrow keys: the panel below follows the
-   cursor and shows every field, "keep: no (pre-set)" or "yes (pre-set)",
-   each attention reason with "(blocking)" or "(advisory)", and "source
-   emails: N" with each email's date and subject. A flight confirmed by a
-   check-in shows two or more source emails.
-4. **Toggle keep.** On a flight pre-set to not keep, press space: its keep
-   cell reads "yes" at once, the totals' kept count goes up by one, the
-   cursor stays on the same flight, and the detail says "yes (your choice;
-   pre-set no)". Press `k`: back to "no (pre-set)". In another terminal,
-   `uv run flighty-exporter flights` shows the same keep after each press
-   (saved immediately).
-5. **Source emails.** Press `enter` on a flight with two source emails: a
-   view lists "[1/2]" and "[2/2]" with each email's date and subject,
-   followed by its saved text (From, Subject, Date, the body, any PDF
-   text); it scrolls with the arrow keys or the mouse. A flight extracted by
-   an older version shows "source text unavailable (extracted before text
-   was saved)" under its subject. `escape` returns to the table with the
-   same flight selected. This works with the mbox file moved away.
-6. **Correct a flight.** On a flight flagged "unknown airport", press `c`:
-   a form shows the date, flight number, origin and destination prefilled.
-   Type an impossible date (2025-02-30) and press `enter`: the form stays
-   open with "date '2025-02-30' is not a real YYYY-MM-DD date; nothing was
-   saved." Empty the origin and press `enter`: "origin is empty". Put back
-   a real date and type a known airport in lower case for the wrong code,
-   press `enter`: the form closes, the row shows the upper-cased code,
-   "corrected", no reasons, keep "yes", and it has moved down out of the
-   flagged group with the cursor still on it. The detail lists
-   "corrections (found -> corrected):" with the old and new code. Correct
-   a good flight's origin to an unknown code (e.g. XQY): it moves up into
-   the flagged group with "unknown airport XQY" and keep "no". Press `c`
-   and `escape`: nothing changes.
-7. **Clear a decision.** On a flight you toggled but did not correct, press
-   `u`: it returns to its pre-set keep without asking. On a corrected
-   flight, press `u`: a box asks to clear the decision, naming the
-   corrections; `n` (or `escape`) keeps it, `y` puts the found values back.
-8. **Filters.** Press `f`: only flights with reasons are shown and the
-   second line reads "Showing: flagged only (A of N flights)". Press `n`:
-   "flagged only, not kept only". Press `y` repeatedly: it steps through
-   each year present, oldest first, then back to all years; a combination
-   that matches nothing says "No flights match these filters.". With the
-   not-kept filter on, press space on a flight: it is kept and leaves the
-   table, the cursor moving to the next flight. `f` and `n` again turn the
-   filters off. The totals line never changes with the filters.
-9. **Dropped bookings and unreadable emails.** Press `d`: a list headed
-   "Bookings dropped as other passengers': N", one line per booking
-   (reference, passengers, flights, first date); `escape` returns. Press
-   `x`: "Emails that could not be read: N", one line per email (date,
-   sender, subject, reason); `escape` returns.
-10. **Export and back.** Press `e`: the export screen opens (see "Export
-    screen" below). Press `b` there: the review comes back with your
-    decisions, read afresh from the store, the filters off and the cursor
-    on the first flight. This works the same after a relaunch that resumed
-    a finished session (no run finished in this launch).
-11. **Saved across sessions.** Make a keep change and a correction, press
-    `q` (the application exits with status `0`), and launch again: once the
-    run has finished (stages read "nothing to do"), press `enter`. The same
-    flights show the same keep values and corrections. `uv run
-    flighty-exporter review --store check.db --force` writes a table with
-    them, and `export --from-store` exports them.
-12. **No flights.** Use a mailbox with no flight emails (or one whose only
-    flight email cannot be read): the review shows "No flights found.",
-    where to look (the emails that could not be read, with their count and
-    `x` to list them) and, for a Quick run, that a Thorough run exists,
-    instead of an empty table. The footer offers only `d`, `x`, `e` and `q`.
-13. **Many flights.** With a store of a few thousand flights, the screen
-    opens within a second or so, and space on one flight updates its row
-    without a visible pause.
+1. **Only after a complete run.** While paused or with a Problem panel,
+   `enter` does nothing and the footer offers no review key.
+2. **Table and totals.** Columns date, flight, route, airline, booking,
+   evidence, keep, corrected, reasons. Blocking reasons (red) first, then
+   advisory (yellow), then the rest, each by date. The first line reads
+   "Flights: N · kept K · not kept M · needing attention A" (as `fe
+   flights`), the second "Showing: all flights (N of N flights)".
+3. **Detail panel.** Moving with the arrows, the panel follows: every field,
+   "keep: … (pre-set)" or "(your choice; pre-set …)", each reason with
+   "(blocking)" or "(advisory)", "source emails: N" with dates and
+   subjects; BA286 shows two or more source emails.
+4. **Toggle keep.** Space on a flight: its keep cell and the totals change
+   at once, the cursor stays, the detail says "your choice". `k` toggles
+   back. `fe flights` in another terminal shows each change.
+5. **Correct and correct back.** `c` on a flight: a form with date, flight
+   number, origin, destination. Type `2025-02-30` and `enter`: "date
+   '2025-02-30' is not a real YYYY-MM-DD date; nothing was saved." Empty the
+   origin: "origin is empty". Type a flight number as `ua-328` for UA328:
+   saving shows `UA328` and no correction, because it equals what was found.
+   Change the destination to an unknown code (`XQY`): the row moves to the
+   flagged group with "unknown airport XQY", keep "no", "corrected", and the
+   detail lists "corrections (found -> corrected):". `c` again, type the
+   original code back, `enter`: the correction disappears and the flight
+   returns to its place. `c` then Escape changes nothing.
+6. **Clear a decision.** `u` on a toggled flight returns it to the pre-set
+   keep; on a corrected flight it asks first (`n` or Escape keeps it, `y`
+   clears it).
+7. **Filters.** `f`: "Showing: flagged only (A of N flights)". `n`: adds
+   "not kept only". `y` steps through each year, oldest first, then back to
+   all; a combination matching nothing says "No flights match these
+   filters.". With the not-kept filter, Space keeps a flight and it leaves
+   the table. The totals line never changes with the filters.
+8. **Source emails.** `enter` on BA286: "[1/2]" and "[2/2]" (or more) with
+   each email's date and subject and its saved text (From, Subject, Date,
+   body, PDF text); it scrolls; Escape returns to the same flight. Rename
+   `test.mbox` away first: the text still shows.
+9. **Lists.** `d`: "Bookings dropped as other passengers': N", one line per
+   booking (reference, passengers, flights, first date); Escape returns.
+   `x`: "Emails that could not be read: N", one line per email; Escape
+   returns.
+10. **Manual-add marker** (fix f). Keep a flight with no flight number (or
+    one before 2006, or with an unknown airport): its detail shows "added by
+    hand in Flighty: no (on the manual-add list: …)". After ticking it on
+    the export screen (section 5) and coming back, it reads "yes". A flight
+    that goes in the import file shows no such line. `fe decide` on it
+    prints the same line.
+11. **Saved across launches.** Make a keep change and a correction, `q`
+    (status `0`), relaunch, resume: the same decisions show. `fe review
+    --force` writes a table with them and `fe export --from-store` exports
+    them.
+12. **No flights.** With a mailbox without flight emails: "No flights
+    found.", where to look, the count of unreadable emails (`x`), and for a
+    Quick run that Thorough exists. The footer offers only `d`, `x`, `e`,
+    `q`.
 
-## Export screen
+## 5. The export
 
-Start from a session whose run has finished (for example after the progress
-screen's checks), so the store holds flights. With `test.mbox` the export
-usually has several flights for the import file; to see the manual-add list,
-keep (in the review) a flight with no flight number, or one dated before 2006,
-or one to an airport the OpenFlights data does not know. Compare every
-screen with `uv run flighty-exporter export --from-store --dry-run`, which
-prints the same plan and writes nothing.
+From the review press `e`. Compare with `fe export --from-store --dry-run`.
 
-1. **Open it.** Launch; once the run has finished press `enter` for the
-   review, then `e` in the review. The status line says nothing is sent
-   anywhere and to press `e`. A Plan panel says how many flights will be exported, how many must
-   be added by hand and how many are not kept: the same three numbers as the
-   dry run's `flights to export`, `flights to add by hand` and `not kept`.
-   No file has been written yet (`ls openflights-backup-*.csv manual-add.csv`
-   shows nothing new). The footer shows `e Export`, `space Tick` (only when
-   there are manual-add flights), `b Back to review` and `q Quit`; not
-   `o Show in Finder`.
-2. **Checklist before exporting.** An "Add by hand in Flighty" panel lists
-   each manual-add flight with Done (`[ ]` or `[x]`), date, route
-   (`OSL → LIS`), flight number (`—` when there is none) and reason, the same
-   flights and reasons as the dry run's "Manual-add list would hold", and
-   "Ticked N of M" above it. With no manual-add flights it says "No flight
-   needs adding by hand: every kept flight goes in the import file." instead.
-3. **Export.** Press `e` (or Enter). The status line says "Writing the
-   files…", then "Export written". An "Import file" panel shows the import
-   file's full path, then "Press o to show it in Finder." (on macOS), then
-   the manual-add list's path. Both files exist at those paths; the import
-   file holds as many flights as the Plan said, and `manual-add.csv` holds
-   the checklist's flights in the same order with `done` = `yes` for the
-   ticked ones. An "Importing into Flighty" panel shows the steps: Settings,
-   Import Flights, OpenFlights; sending the file to the address Flighty gives
-   you; Flighty Pro for flights older than a year; manual-add flights entered
-   by hand with the two airports and the date; and the note that Flighty
-   documents support only for OpenFlights' own exports. `uv run
-   flighty-exporter session` lists the import file and the manual-add list
-   under "Files written".
-4. **Reveal.** Press `o`. Finder opens with the import file selected. (On a
-   system other than macOS, the panel instead says which folder the file is
-   in, and `o` shows a note with the full path.)
-5. **Tick and untick.** Move to a manual-add flight with the arrow keys and
-   press space: its Done cell becomes `[x]` and "Ticked" goes up by one. Open
-   `manual-add.csv` (or `cat` it): that flight's `done` column is `yes`
-   already, without exporting again, and the import file's modification
-   time has not changed. Press space again: `[ ]`, the count goes down, and
-   `done` is empty again in the file. `uv run flighty-exporter export
-   --from-store --dry-run` shows the same ticks.
-6. **Ticks persist.** Tick one flight, press `q` (the application closes,
-   exit status `0`), launch again, press `enter` once the run shows
-   finished, then `e`: the same flight is still ticked, before and after
-   exporting again.
-7. **Back to the review and export again.** Press `b`: the review screen
-   comes back (filters off, cursor on the first flight), with your
-   decisions. Change a decision there (for example press space on one of
-   the exported flights so it is not kept), then press `e`: the Plan shows
-   the new numbers. Wait for the clock to pass the minute and press `e`: a second
-   `openflights-backup-...csv` appears next to the first (an export in the
-   same minute as the previous one replaces that file), and `session` lists
-   both. `uv run flighty-exporter session --fresh-preview` would delete
-   both.
-8. **Reference data missing.** Point `[export] data_dir` at an empty folder
-   and `data_url` at an address that does not answer (for example
-   `http://127.0.0.1:9/data/`), launch and open the export. A red Problem
-   panel shows the same message `export` prints ("OpenFlights data file
-   airports.dat is not in … and could not be downloaded …") and that
-   nothing was exported; the footer offers `r Retry`, `b Back to review` and
-   `q Quit`, and `e` does nothing. Put the data back (or restore the config
-   and relaunch) and press `r`: the Plan appears.
-9. **Nothing kept.** Stop keeping every flight in the review, then open the
-   export. The status line says no flight is kept and there is nothing to
-   export; the Plan reads 0, 0 and the number not kept; the footer offers
-   only `b Back to review` and `q Quit`, and `e` writes nothing.
-10. **Nothing leaves the machine.** Throughout, nothing is sent to Flighty or
-    to any other service: with the network off, every step above except a
-    first download of the reference data works the same.
+1. **Plan.** The status line says nothing is sent anywhere and to press
+   `e`. The Plan panel gives the flights for the import file, to add by hand
+   and not kept: the dry run's three numbers. No file is written yet. The
+   footer shows `e Export`, `space Tick` (only with manual-add flights), `b
+   Back to review`, `q Quit`, not `o`.
+2. **Checklist.** "Add by hand in Flighty" lists each manual-add flight with
+   `[ ]`/`[x]`, date, route (`OSL → LIS`), flight number (`—` if none) and
+   reason, with "Ticked N of M" above; with none it says "No flight needs
+   adding by hand: every kept flight goes in the import file."
+3. **Export.** `e` (or Enter): "Writing the files…", then "Export written".
+   The "Import file" panel shows the full path on its own line(s), broken
+   after a `/` (fix h), "Press o to show it in Finder.", and "Manual-add
+   list:" with its path on the next line. The "Importing into Flighty"
+   panel lists the steps and the caveat. The import file holds as many
+   flights as the plan said; `fe session` lists both files.
+4. **Reveal.** `o` opens Finder with the import file selected (macOS).
+5. **Tick.** Space on a manual-add flight: `[x]`, the count goes up, and
+   `manual-add.csv` has `done` = `yes` at once, without a new export (the
+   import file's time is unchanged). Space again unticks.
+6. **Back keeps the review's place** (fix e). In the review, set the
+   flagged filter and a year, select a flight that is not the first row,
+   press `e`, then `b`: the review shows the same filters ("Showing: …") and
+   the same flight selected. Change a decision, `e` again: the plan shows
+   the new numbers. Wait for the next minute and export: a second import
+   file appears (an export in the same minute replaces the first).
+7. **Reference data missing.** With `[export] data_dir` an empty folder and
+   `data_url = "http://127.0.0.1:9/data/"`: a red Problem panel with the
+   message `export` prints and "Nothing was exported"; footer `r`, `b`,
+   `q`; `e` does nothing.
+8. **Nothing kept.** Drop every flight, open the export: "No flight is
+   kept …", plan 0, 0 and the not-kept number; only `b` and `q`.
+
+## 6. Resume or start fresh (later launches)
+
+1. **Unfinished session.** Quit during the run, relaunch: "A previous
+   session was found." and a panel titled "Session" (no path in the title,
+   nothing cut off: fix h) with the store and mailbox each on their own
+   line(s), started and last active, names, thoroughness, then "How far it
+   got": "classify N emails read" with the line "(messages under Spam,
+   Trash, Drafts and Chat are not counted)" under it (fix c), extract "N of
+   M likely flight emails extracted", review, threshold and files; then "The
+   run is unfinished" with what is left. Footer `r Resume`, `f Start fresh`,
+   `q Quit`. The figures match `fe session`.
+2. **Resume unfinished.** `r`: the progress screen carries on.
+3. **Finished session.** After a finished run, relaunch: "The run is
+   complete. Resuming opens its review." `r` opens the review at once with
+   the saved decisions, no model request.
+4. **Threshold lowered.** After a Thorough run that lowered it, the
+   threshold line reads like "0.02 (lowered for this session from the
+   configured 0.05)".
+5. **Mailbox moved.** Rename `test.mbox` and relaunch: the Mailbox label
+   says "(no longer there)" in red. Finished: a note says it does not matter
+   for the review, and `r` opens it. Unfinished: a paragraph says resuming
+   would stop with "mailbox file not found".
+6. **Start fresh, cancelled.** `f`: "Start fresh?" listing what would be
+   lost and what is kept. After a Thorough run the extraction line separates
+   the two counts, e.g. "extraction of 16 emails, and 77 more read by the
+   check for missed flight emails" (fix b); it matches `fe session`'s
+   "Starting fresh would lose". `n` or Escape closes it; nothing is deleted.
+7. **Start fresh, confirmed.** `f`, `y`: setup opens with "Started fresh."
+   and one line per deleted file (review table, failures file, audit report,
+   import files, manual-add list, the store). On disk those files and
+   `flighty_exporter.db*` are gone; `test.mbox`, `flighty_exporter.toml` and
+   any file of your own are still there, as are your models (`ollama list`)
+   and `~/.cache/flighty_exporter/openflights`. The answers are filled in.
+8. **Quit.** `q` exits with status `0`.
+
+## Recorded walkthroughs
+
+Add a row each time the list is walked. "Automated" means driven with keys
+in a pseudo-terminal and the screen read back; steps that need a person
+(Finder, drag and drop, mouse, a real download) are listed as not walked.
+
+| Date | Who | Tool version (commit) | Ollama, models | How | Sections walked | Result | Defects found |
+| --- | --- | --- | --- | --- | --- | --- | --- |

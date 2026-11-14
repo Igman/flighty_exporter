@@ -2,7 +2,8 @@
 # optional; the values below are the defaults. Relative paths are resolved
 # against this file's directory.
 
-# The Gmail Takeout mbox. Can also be given with `--mailbox PATH` (classify, extract, audit).
+# The Gmail Takeout mbox. Can also be given with `--mailbox PATH` (run, classify, extract, audit);
+# the application's setup (or the `setup` command) writes it.
 # mailbox = "Takeout/Mail/All mail Including Spam and Trash.mbox"
 
 # SQLite store holding every pass's results (personal data: never commit it).
