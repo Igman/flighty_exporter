@@ -150,6 +150,21 @@ def record_written(store: Store, kind: str, path: Path) -> None:
     store.record_written_file(path, kind)
 
 
+def record_export(store: Store, import_path: Path | None, manual_add_path: Path | None) -> None:
+    """Record the files an export wrote (each import file is kept on record,
+    so starting fresh deletes every one) and the activity."""
+    if import_path is not None:
+        record_written(store, IMPORT_FILE, import_path)
+    if manual_add_path is not None:
+        record_written(store, MANUAL_ADD_LIST, manual_add_path)
+    touch(store)
+
+
+def written(store: Store, kind: str) -> list[Path]:
+    """The files of ``kind`` recorded as written for the session that still exist."""
+    return [path for recorded, path, _ in store.written_files() if recorded == kind and path.is_file()]
+
+
 # -- describing ------------------------------------------------------------------------
 
 

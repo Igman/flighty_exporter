@@ -209,7 +209,14 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
     if from_store and not store_path.is_file():
         print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
         return EXIT_ERROR
+    if args.dry_run and not from_store:
+        raise UsageError("--dry-run shows what exporting from the store would do; pass --from-store with it")
     try:
+        if args.dry_run:
+            with Store(store_path) as store:
+                plan = export.plan_store_export(config, store, config.export_data_dir, config.export_data_url)
+            print(export.format_plan(plan))
+            return EXIT_OK
         if from_store:
             with Store(store_path) as store:
                 summary = export.run_store_export(
@@ -233,11 +240,7 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
 
 def _record_export(store: Store, summary: export.ExportSummary) -> None:
     """Record the files an export wrote for the session in ``store``."""
-    if summary.import_path is not None:
-        session.record_written(store, session.IMPORT_FILE, summary.import_path)
-    if summary.manual_add_path is not None:
-        session.record_written(store, session.MANUAL_ADD_LIST, summary.manual_add_path)
-    session.touch(store)
+    session.record_export(store, summary.import_path, summary.manual_add_path)
 
 
 COMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None], Callable[..., int]]] = {}
@@ -328,6 +331,12 @@ def _export_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="export the store's flight list with the saved review decisions, even if a review table exists",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --from-store: print what the export would write (the flights for the import file, and the "
+        "manual-add list with reasons and ticks) and write nothing",
+    )
 
 
 COMMANDS["export"] = (
@@ -351,10 +360,21 @@ def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
         key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
         store.set_added(key, not args.undo)
         session.touch(store)
+        # A manual-add list an export already wrote follows the tick at once.
+        refreshed = []
+        for path in session.written(store, session.MANUAL_ADD_LIST):
+            try:
+                export.refresh_manual_add(store, path)
+            except export.ExportError as exc:
+                _warn(f"warning: {exc}")
+            else:
+                refreshed.append(path)
     if args.undo:
         print(f"Flight {key} is no longer marked as added in Flighty.")
     else:
         print(f"Flight {key} is marked as added in Flighty; export shows it as done on the manual-add list.")
+    for path in refreshed:
+        print(f"Manual-add list updated: {path}")
     return EXIT_OK
 
 
