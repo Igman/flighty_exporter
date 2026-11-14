@@ -8,7 +8,8 @@ import signal
 import threading
 
 from fake_ollama import Chat, Decision
-from mailbox_fixtures import FLIGHT_BODY, email, write_mbox
+from mailbox_fixtures import FLIGHT_BODY, email, image_only_pdf, write_mbox
+from test_consolidation import ROBIN, SAM, record, seg
 from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT
 from test_markup import flight_reservation, json_ld_html, markup_email
 from test_preflight import dead_address
@@ -293,3 +294,112 @@ def test_server_going_away_mid_run_says_the_stage_stopped_and_how_to_resume(work
     assert f"error: cannot reach Ollama at {workspace.ollama.url}" in result.stderr
     assert "Progress so far is saved; rerun run to resume." in result.stderr
     assert workspace.ollama.chat_requests() == []
+
+
+# -- the end-of-run report ------------------------------------------------------------
+
+
+def report_mailbox(workspace):
+    """Bookings that exercise every line of the report. Robin is the user."""
+    workspace.write_config(f'[ollama]\naddress = "{workspace.ollama.url}"\n\n[passenger]\nnames = ["{ROBIN}"]\n')
+    mails = [
+        # Two legs, the second replaced by a later schedule change: 2 flights, 1 booking replaced.
+        ("Your CHG555 itinerary", "01", "booking confirmation",
+         record("booking", "CHG555", seg("2025-06-01", "ZZ100", "LIS", "FRA"), seg("2025-06-01", "ZZ200", "FRA", "VIE"))),
+        ("Schedule change for CHG555", "10", "change",
+         record("change", "CHG555", seg("2025-06-01", "ZZ100", "LIS", "FRA"), seg("2025-06-01", "ZZ208", "FRA", "VIE"))),
+        # Booked, then cancelled: no flight, 1 booking cancelled.
+        ("Your CXL111 booking", "02", "booking confirmation",
+         record("booking", "CXL111", seg("2025-07-01", "ZZ500", "LIS", "OSL"))),
+        ("Booking CXL111 cancelled", "05", "cancellation", record("cancellation", "CXL111")),
+        # Sam's trip: dropped as another passenger's.
+        ("Sam's OTH777 itinerary", "03", "booking confirmation",
+         record("booking", "OTH777", seg("2025-08-01", "ZZ600", "OSL", "CPH"), passengers=(SAM,))),
+        # No flight number: needs attention, still kept.
+        ("Your NON123 booking", "04", "booking confirmation",
+         record("booking", "NON123", seg("2025-09-01", "", "OSL", "LIS"))),
+        # An unknown airport: needs attention (and its confidence is halved), pre-set to not keep.
+        ("Your UNK456 booking", "06", "booking confirmation",
+         record("booking", "UNK456", seg("2025-10-01", "ZZ300", "LIS", "QQX"))),
+    ]
+    messages = []
+    for subject, day, email_type, rec in mails:
+        workspace.ollama.decisions[subject] = Decision(0.9, email_type)
+        workspace.ollama.chats[subject] = Chat(rec)
+        messages.append(email(subject, "Invented email.\n", date=f"{day} Mar 2025 10:00:00 +0000"))
+    # A scanned ticket whose PDF cannot be read, an extraction that fails, and a classification that fails.
+    workspace.ollama.decisions["Your scanned ticket"] = Decision(0.9, "booking confirmation")
+    messages.append(email("Your scanned ticket", "Attached.\n",
+                          attachments=[("scan.pdf", image_only_pdf(), "application/pdf")]))
+    workspace.ollama.decisions[BROKEN_SUBJECT] = Decision(0.9, "booking confirmation")
+    workspace.ollama.chats[BROKEN_SUBJECT] = Chat(content="not json at all")
+    messages.append(email(BROKEN_SUBJECT, "Attached.\n"))
+    workspace.ollama.decisions["Unclassifiable note"] = Decision(status=500)
+    messages.append(email("Unclassifiable note"))
+    return write_mbox(workspace.root / "mail.mbox", messages)
+
+
+def test_report_states_what_was_found_what_failed_where_the_files_are_and_what_to_do_next(workspace):
+    mbox = report_mailbox(workspace)
+
+    result = run(workspace, "--mailbox", str(mbox), "--output", "out/review.csv", "--failures", "out/failures.csv")
+
+    report = result.stdout[result.stdout.index("Run finished."):]
+    assert report.splitlines() == [
+        "Run finished.",
+        "  flights found:              4",
+        "    confirmed:                0",
+        "    booked only:              4",
+        "  flights needing attention:  2",
+        "    unknown airport (QQX): 1",
+        "    low confidence: 1",
+        "    no flight number: 1",
+        "  flights pre-set to not keep: 1",
+        "  bookings cancelled:         1",
+        "  bookings with replaced segments: 1",
+        "  bookings for other passengers (dropped): 1",
+        "  messages that failed:",
+        "    classify:                 1",
+        "    extract:                  1",
+        "  PDF attachments not read:   1",
+        "Files written:",
+        "  review table: out/review.csv",
+        "  failures file: out/failures.csv",
+        "Next step: check out/review.csv, then run export.",
+    ]
+    assert (workspace.root / "out" / "review.csv").exists()
+    assert (workspace.root / "out" / "failures.csv").exists()
+    # Each stage's start line comes before its own summary.
+    out = result.stdout
+    assert out.index("Starting classify.") < out.index("Classify pass finished.") < out.index("Starting extract.")
+    assert out.index("Extract pass finished.") < out.index("Starting review.") < out.index("Review table written to")
+    assert "classify: 10/10" in result.stderr and "extract: 9/9" in result.stderr
+
+
+def test_an_edited_review_table_is_left_as_it_is_and_the_report_still_counts_the_flights(workspace):
+    mbox = report_mailbox(workspace)
+    run(workspace, "--mailbox", str(mbox))
+    review_csv = workspace.root / "review.csv"
+    edited = review_csv.read_bytes().replace(b"yes,", b"no,", 1)
+    assert edited != review_csv.read_bytes()
+    review_csv.write_bytes(edited)
+    (workspace.root / "failures.csv").unlink()
+
+    result = run(workspace, "--mailbox", str(mbox))
+
+    assert review_csv.read_bytes() == edited
+    assert (
+        f"Review table {review_csv}: review table was edited and has been left as it is; "
+        "pass --force to regenerate it." in result.stdout
+    )
+    report = result.stdout[result.stdout.index("Run finished."):]
+    assert "  flights found:              4" in report
+    assert "  review table:" not in report
+    assert f"  failures file: {workspace.root / 'failures.csv'}" in report
+    assert (workspace.root / "failures.csv").exists()
+    assert "Note: review table was edited and has been left as it is; pass --force to regenerate it" in report
+
+    forced = run(workspace, "--mailbox", str(mbox), "--force")
+
+    assert review_csv.read_bytes() != edited
+    assert f"  review table: {review_csv}" in forced.stdout

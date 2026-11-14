@@ -50,7 +50,8 @@ def format_report(report: RunReport) -> str:
     for kind in (*REASON_KINDS, NO_PASSENGER_NAMED):
         count = review.reasons.get(kind, 0)
         if count:
-            lines.append(f"    {kind}: {count}")
+            codes = review.unknown_codes.get(kind)
+            lines.append(f"    {kind} ({', '.join(codes)}): {count}" if codes else f"    {kind}: {count}")
     lines += [
         f"  flights pre-set to not keep: {review.not_kept}",
         f"  bookings cancelled:         {review.bookings_cancelled}",
