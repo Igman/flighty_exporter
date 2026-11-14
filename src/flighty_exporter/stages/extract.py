@@ -119,6 +119,9 @@ def extract_messages(
         mbox.close()
 
 
+LOCATING = "locating messages"
+
+
 def _locate(
     mbox: Mailbox,
     wanted: set[str],
@@ -142,7 +145,8 @@ def _locate(
     if len(found) == len(wanted):
         return found
     scanned: dict[str, int] = {}
-    progress = Progress(len(mbox), f"{label}: locating messages", progress_stream, on_progress, summary)
+    progress = Progress(len(mbox), f"{label}: {LOCATING}", progress_stream, on_progress, summary)
+    progress.phase = LOCATING
     try:
         for position, identifier in mbox.identifiers():
             if identifier is not None:

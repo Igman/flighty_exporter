@@ -249,7 +249,8 @@ class _Run:
             self.model_requests = progress.work_done
             self.emit(
                 StageProgress(
-                    stage, progress.done, progress.total, progress.seconds_per_message, progress.seconds_remaining
+                    stage, progress.done, progress.total, progress.seconds_per_message, progress.seconds_remaining,
+                    progress.phase,
                 )
             )
             self.emit(StageCounts(stage, copy.copy(progress.counts)))

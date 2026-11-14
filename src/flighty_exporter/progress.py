@@ -18,6 +18,10 @@ from typing import Any, TextIO
 
 
 class Progress:
+    # Names a preliminary pass within a stage (e.g. extract's scan to locate
+    # its messages); "" for the stage's main work.
+    phase = ""
+
     def __init__(
         self,
         total: int,

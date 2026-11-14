@@ -11,7 +11,8 @@ asked for) ends with the stopped stage's ``StageFinished`` and no
 Extract's progress can come in two runs: when message positions are missing
 or stale, it first scans the mailbox's headers to locate its messages
 (``StageProgress.total`` is then the number of mailbox entries), then
-reports one step per selected message.
+reports one step per selected message. The scan's ``StageProgress`` carries
+``phase`` = ``"locating messages"``.
 
 Stage summaries are the stages' own summary objects (``ClassifySummary``,
 ``ExtractSummary``, ``ReviewSummary``). Those in ``StageCounts`` are shallow
@@ -64,6 +65,7 @@ class StageProgress:
     total: int
     seconds_per_message: float | None  # measured over messages that needed the model; None until one has
     seconds_remaining: float | None
+    phase: str = ""  # names a preliminary pass within the stage (extract's LOCATING scan), "" otherwise
 
 
 @dataclass(frozen=True)
