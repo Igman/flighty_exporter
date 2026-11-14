@@ -45,7 +45,6 @@ from ...store import Store
 
 GROUP_STYLES = {flight_view.BLOCKING: "red", flight_view.ADVISORY: "yellow", flight_view.NO_ATTENTION: ""}
 REASONS_COLUMN = flight_view.COLUMNS.index("reasons")
-EXPORT_UNAVAILABLE = "export is not available yet"
 FLIGHT_ACTIONS = {"toggle_keep", "open_emails", "correct", "reset", "toggle_flagged", "toggle_not_kept", "next_year"}
 
 
@@ -280,11 +279,7 @@ class ReviewScreen(Screen):
         self.app.push_screen(ListScreen(f"{flight_view.FAILURES_HEADING}: {len(lines)}", lines))
 
     def action_export(self) -> None:
-        open_export = getattr(self.app, "open_export", None)
-        if open_export is None:
-            self.notify(EXPORT_UNAVAILABLE)
-        else:
-            open_export()
+        self.app.open_export()  # type: ignore[attr-defined]
 
 
 class EmailScreen(Screen):

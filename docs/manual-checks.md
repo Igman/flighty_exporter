@@ -198,9 +198,11 @@ the same order.
    (reference, passengers, flights, first date); `escape` returns. Press
    `x`: "Emails that could not be read: N", one line per email (date,
    sender, subject, reason); `escape` returns.
-10. **Export.** Press `e`: until the export screen exists, a notice says
-    "export is not available yet"; once it does, the export screen opens,
-    and coming back from it shows the review again with your decisions.
+10. **Export and back.** Press `e`: the export screen opens (see "Export
+    screen" below). Press `b` there: the review comes back with your
+    decisions, read afresh from the store, the filters off and the cursor
+    on the first flight. This works the same after a relaunch that resumed
+    a finished session (no run finished in this launch).
 11. **Saved across sessions.** Make a keep change and a correction, press
     `q` (the application exits with status `0`), and launch again: once the
     run has finished (stages read "nothing to do"), press `enter`. The same
@@ -226,10 +228,9 @@ or one to an airport the OpenFlights data does not know. Compare every
 screen with `uv run flighty-exporter export --from-store --dry-run`, which
 prints the same plan and writes nothing.
 
-1. **Open it.** From the review, move on to the export (once the review
-   screen exists; until then there is no way to reach it in the running
-   application). The status line says nothing is sent anywhere and to press
-   `e`. A Plan panel says how many flights will be exported, how many must
+1. **Open it.** Launch; once the run has finished press `enter` for the
+   review, then `e` in the review. The status line says nothing is sent
+   anywhere and to press `e`. A Plan panel says how many flights will be exported, how many must
    be added by hand and how many are not kept: the same three numbers as the
    dry run's `flights to export`, `flights to add by hand` and `not kept`.
    No file has been written yet (`ls openflights-backup-*.csv manual-add.csv`
@@ -266,12 +267,14 @@ prints the same plan and writes nothing.
    `done` is empty again in the file. `uv run flighty-exporter export
    --from-store --dry-run` shows the same ticks.
 6. **Ticks persist.** Tick one flight, press `q` (the application closes,
-   exit status `0`), launch again and come back to the export screen: the
-   same flight is still ticked, before and after exporting again.
+   exit status `0`), launch again, press `enter` once the run shows
+   finished, then `e`: the same flight is still ticked, before and after
+   exporting again.
 7. **Back to the review and export again.** Press `b`: the review screen
-   comes back. Change a decision there (for example stop keeping one of the
-   exported flights), then go to the export again: the Plan shows the new
-   numbers. Wait for the clock to pass the minute and press `e`: a second
+   comes back (filters off, cursor on the first flight), with your
+   decisions. Change a decision there (for example press space on one of
+   the exported flights so it is not kept), then press `e`: the Plan shows
+   the new numbers. Wait for the clock to pass the minute and press `e`: a second
    `openflights-backup-...csv` appears next to the first (an export in the
    same minute as the previous one replaces that file), and `session` lists
    both. `uv run flighty-exporter session --fresh-preview` would delete

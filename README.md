@@ -216,20 +216,6 @@ model-server problem, once you have fixed it. The same rule as the commands
 keeps email on this machine: a non-local Ollama address is refused unless the
 config file allows it.
 
-The export screen (reached from the review) writes the import file for
-Flighty from the flights you kept, through the same code as `export
---from-store`. It first shows what the export would do: how many flights go in
-the import file, how many must be added by hand and how many are not kept.
-Keys: `e` (or Enter) writes the files and shows the import file's full path
-and the steps for importing it into Flighty; `o` shows the file in Finder
-(macOS; elsewhere the screen says which folder it is in); space ticks the
-selected flight on the manual-add checklist (date, route, flight number,
-reason) once you have entered it in Flighty, saved at once and written to
-`manual-add.csv`; `b` goes back to the review, where you can change a decision
-and export again (each export writes a new import file named with the time);
-`q` quits. Nothing is sent to Flighty or anywhere else: the screen only writes
-local files.
-
 Outside a terminal (piped, or run from a script), the bare command prints the
 usage line and exits with status 2, as before.
 
@@ -253,6 +239,20 @@ saved in the store the moment you make it, so it is there when you come
 back, and `review` and `export` use it too. The `flights` and `decide`
 commands (see [4. review](#4-review)) show and make the same decisions from
 the command line.
+
+**Exporting in the application.** Press `e` in the review: the export screen
+writes the import file for Flighty from the flights you kept, through the
+same code as `export --from-store`. It first shows what the export would do: how many flights go in
+the import file, how many must be added by hand and how many are not kept.
+Keys: `e` (or Enter) writes the files and shows the import file's full path
+and the steps for importing it into Flighty; `o` shows the file in Finder
+(macOS; elsewhere the screen says which folder it is in); space ticks the
+selected flight on the manual-add checklist (date, route, flight number,
+reason) once you have entered it in Flighty, saved at once and written to
+`manual-add.csv`; `b` goes back to the review, where you can change a decision
+and export again (each export writes a new import file named with the time);
+`q` quits. Nothing is sent to Flighty or anywhere else: the screen only writes
+local files.
 
 ### All in one go: run
 
