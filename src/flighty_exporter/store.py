@@ -405,6 +405,17 @@ class Store:
             for key, keep, day, number, origin, destination, added in rows
         }
 
+    def review_decision(self, flight_key: str) -> ReviewDecision | None:
+        """The saved review decision of one flight, or None."""
+        row = self._db.execute(
+            "SELECT keep, date, flight_number, origin, destination, added FROM review_decisions WHERE flight_key = ?",
+            (flight_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        keep, day, number, origin, destination, added = row
+        return ReviewDecision(None if keep is None else bool(keep), day, number, origin, destination, bool(added))
+
     def save_keep(self, flight_key: str, keep: bool | None) -> None:
         """Save (or with None, remove) the keep override for a flight."""
         self._update_decision(flight_key, keep=None if keep is None else int(keep))

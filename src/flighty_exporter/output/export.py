@@ -46,8 +46,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..flights.decisions import ReviewDecision, ReviewedFlight, is_date, resolve_key
-from ..flights.validate import normalise_airport, normalise_flight_number
+from ..flights.decisions import (
+    Corrections, InvalidCorrection, ReviewDecision, ReviewedFlight, keep_override, resolve_key,
+    typed_corrections,
+)
 from ..store import Store
 from ..tables import write_csv
 from . import openflights as import_format
@@ -159,28 +161,26 @@ def record_decisions(config: Config, store: Store, rows: list[ReviewRow]) -> tup
     decisions discarded because their flight is no longer produced)."""
     before = store.review_decisions()
     flights = {reviewed.key: reviewed for reviewed in build_flight_list(config, store).flights}
-    wanted: dict[str, tuple[bool, str, str, str, str]] = {}
+    wanted: dict[str, tuple[bool, Corrections]] = {}
     for _, cells in rows:
         key = cells.get("flight_id", "")
         keep = _keep_value(cells.get("keep", ""))
-        day, origin, destination = cells.get("date", ""), cells.get("origin", ""), cells.get("destination", "")
-        if key not in flights or keep is None or not is_date(day) or not origin or not destination:
+        if key not in flights or keep is None:
             continue
-        wanted[key] = (keep, day, normalise_flight_number(cells.get("flight_number", "")),
-                       normalise_airport(origin), normalise_airport(destination))
-    for key, (_, day, number, origin, destination) in wanted.items():
-        original = flights[key].original
-        store.save_corrections(
-            key,
-            date=day if day != original.date else None,
-            flight_number=number if number != original.flight_number else None,
-            origin=origin if origin != original.origin else None,
-            destination=destination if destination != original.destination else None,
-        )
+        try:
+            found = typed_corrections(
+                flights[key].original, cells.get("date", ""), cells.get("flight_number", ""),
+                cells.get("origin", ""), cells.get("destination", ""),
+            )
+        except InvalidCorrection:
+            continue
+        wanted[key] = (keep, found)
+    for key, (_, found) in wanted.items():
+        store.save_corrections(key, found.date, found.flight_number, found.origin, found.destination)
     flight_list = build_flight_list(config, store)
     corrected = {reviewed.key: reviewed for reviewed in flight_list.flights}
-    for key, (keep, *_) in wanted.items():
-        store.save_keep(key, keep if keep != corrected[key].preset_keep else None)
+    for key, (keep, _) in wanted.items():
+        store.save_keep(key, keep_override(keep, corrected[key].preset_keep))
     after = store.review_decisions()
     recorded = sum(1 for key in wanted if _choices(before.get(key)) != _choices(after.get(key)))
     return recorded, discard_stale_decisions(store, flight_list)
