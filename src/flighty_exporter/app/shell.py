@@ -20,6 +20,7 @@ from ..config import Config
 from ..engine.report import RunReport
 from .runner import RunInputs
 from .screens.progress import ProgressScreen
+from .screens.review import ReviewScreen
 from .screens.setup_unavailable import SetupUnavailableScreen
 
 
@@ -53,14 +54,16 @@ class FlightyApp(App[int]):
         self.switch_screen(screen)
 
     def on_progress_screen_run_completed(self, message: ProgressScreen.RunCompleted) -> None:
+        # The progress screen stays, showing the report, until the user
+        # presses its key for review (which calls ``open_review``).
         self.report = message.report
-        self.open_review(message.report)
 
-    def open_review(self, report: RunReport) -> None:
-        """Hook for moving on to review once a run has finished. The review
-        screen does not exist yet, so the progress screen stays, showing the
-        report; the review ticket shows its screen here (``show_screen``),
-        or from a key on the progress screen that calls this."""
+    def open_review(self, report: RunReport | None) -> None:
+        """Show the review screen for the finished run ``report``. Called
+        from the progress screen's review key once the run is complete (the
+        key is offered only then), and by later screens to come back to
+        review; the screen reads the flight list afresh from the store."""
+        self.show_screen(ReviewScreen(self.config, report))
 
     async def action_quit(self) -> None:
         request_quit = getattr(self.screen, "request_quit", None)
