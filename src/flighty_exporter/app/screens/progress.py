@@ -28,9 +28,7 @@ from textual.widgets import Footer, Log, ProgressBar, Static
 
 from ...engine.events import (
     ADDRESS,
-    CLASSIFY,
     DONE,
-    EXTRACT,
     NOTHING_TO_DO,
     STOPPED,
     Notice,
@@ -44,6 +42,8 @@ from ...engine.events import (
 )
 from ...engine.pipeline import FINISHED, STOPPED_ON_REQUEST
 from ...engine.report import RunReport, format_report
+from ...stages.classify import ClassifySummary
+from ...stages.extract import ExtractSummary
 from ..runner import EngineEvent, EngineRunner, RunEnded, RunInputs
 
 # What the screen is doing.
@@ -82,24 +82,6 @@ RETRY_HINT = "Press r to retry once it is fixed, or q to quit."
 ADDRESS_HINT = "Change [ollama] address in the config file, then start flighty-exporter again. Press q to quit."
 REVIEW_NEXT = "Reviewing the flights will happen in the next screen once it exists; for now, press q to quit."
 
-# The counts shown for the stages this screen knows, as (summary field, label).
-# Any other stage's summary is shown generically: every numeric field.
-KNOWN_COUNTS: dict[str, tuple[tuple[str, str], ...]] = {
-    CLASSIFY: (
-        ("classified", "classified"),
-        ("resolved_from_markup", "resolved from machine-readable data"),
-        ("skipped", "skipped"),
-        ("failed", "failed"),
-    ),
-    EXTRACT: (
-        ("extracted", "extracted"),
-        ("failed", "failed"),
-        ("retries", "retries"),
-        ("pdfs_not_read", "PDFs not read"),
-    ),
-}
-
-
 def human_duration(seconds: float) -> str:
     minutes = round(seconds / 60)
     if minutes < 1:
@@ -125,17 +107,35 @@ def progress_line(event: StageProgress) -> str:
     return " · ".join(parts)
 
 
-def summary_counts(stage: str, summary: Any) -> list[tuple[str, int]]:
-    """(label, value) for the counts worth showing from a stage's summary."""
-    known = KNOWN_COUNTS.get(stage)
-    if known is not None:
-        return [(label, getattr(summary, name)) for name, label in known if hasattr(summary, name)]
+def summary_counts(summary: Any) -> list[str]:
+    """The counts worth showing from a stage's summary, as text.
+
+    For classify and extract they are the session's totals so far: each
+    summary counts this run's work next to what earlier runs had already
+    done ("already classified", "already extracted"), so "done so far" is
+    their sum. Failures are retried on every run, so the failed count is the
+    messages still failing. Any other summary is shown generically: every
+    numeric field."""
+    if isinstance(summary, ClassifySummary):
+        return [
+            f"classified {summary.classified + summary.already_classified:,}",
+            "resolved from machine-readable data "
+            f"{summary.resolved_from_markup + summary.already_resolved_from_markup:,}",
+            f"skipped {summary.skipped:,}",
+            f"failed {summary.failed:,}",
+        ]
+    if isinstance(summary, ExtractSummary):
+        extracted = summary.extracted + summary.already_extracted
+        return [
+            f"extracted {extracted:,} of {summary.selected:,}" if summary.selected else f"extracted {extracted:,}",
+            f"failed {summary.failed + summary.not_in_mailbox:,}",
+        ]
     if dataclasses.is_dataclass(summary):
         values = {field.name: getattr(summary, field.name) for field in dataclasses.fields(summary)}
     else:
         values = dict(vars(summary)) if hasattr(summary, "__dict__") else {}
     return [
-        (name.replace("_", " "), value)
+        f"{name.replace('_', ' ')} {value:,}"
         for name, value in values.items()
         if isinstance(value, int) and not isinstance(value, bool)
     ]
@@ -180,7 +180,7 @@ class ProgressScreen(Screen):
         self.runner = EngineRunner(inputs, self)
         self.view = STARTING
         self.stages: dict[str, str] = {}  # stage -> its state, in the engine's order
-        self.counts: dict[str, list[tuple[str, int]]] = {}
+        self.counts: dict[str, list[str]] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="body"):
@@ -221,7 +221,7 @@ class ProgressScreen(Screen):
         event = message.event
         if isinstance(event, RunStarted):
             self.stages = {stage: WAITING for stage in event.stages}
-            self.counts = {}
+            # Counts are the session's totals: they stay until the new run's replace them.
             self._draw_stages()
             self._draw_counts()
             if self.view == STARTING:
@@ -244,7 +244,7 @@ class ProgressScreen(Screen):
             self.query_one("#bar", ProgressBar).update(total=event.total, progress=event.done)
             self.query_one("#current-detail", Static).update(progress_line(event))
         elif isinstance(event, StageCounts):
-            self.counts[event.stage] = summary_counts(event.stage, event.summary)
+            self.counts[event.stage] = summary_counts(event.summary)
             self._draw_counts()
         elif isinstance(event, StageFinished):
             self.stages[event.stage] = event.state
@@ -252,7 +252,7 @@ class ProgressScreen(Screen):
             self.query_one("#current").display = False
             if event.summary is not None and event.stage in self.counts:
                 # The final figures of a stage whose counts were showing.
-                self.counts[event.stage] = summary_counts(event.stage, event.summary)
+                self.counts[event.stage] = summary_counts(event.summary)
                 self._draw_counts()
             if event.note:
                 self._log(f"{event.stage}: {event.note}")
@@ -338,7 +338,7 @@ class ProgressScreen(Screen):
     def _draw_counts(self) -> None:
         lines = []
         for stage, counts in self.counts.items():
-            shown = " · ".join(f"{escape(label)} {value:,}" for label, value in counts)
+            shown = " · ".join(escape(count) for count in counts)
             lines.append(f"[b]{escape(stage)}[/b]: {shown}")
         self.query_one("#counts", Static).update("\n".join(lines) or "No counts yet.")
 

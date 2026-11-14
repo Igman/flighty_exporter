@@ -34,8 +34,11 @@ scratch.
    over the screen (no stray progress lines).
 3. **Counts.** The Counts panel shows, for classify: classified, resolved from
    machine-readable data, skipped, failed; once extract starts, a second line:
-   extracted, failed, retries, PDFs not read. The numbers grow as the run
-   proceeds and agree with the progress panel.
+   "extracted N of M" (M being the messages selected for extraction) and
+   failed. They are the session's totals so far, not just this launch's: when
+   classify finishes, classified plus resolved plus skipped plus failed adds
+   up to the messages in the mailbox, and when extract finishes N equals M
+   less the failed ones.
 4. **Locating messages.** With a store from an earlier run and a mailbox that
    has changed since (or a store made before message positions existed),
    extract's panel first shows "Locating messages" and "N of TOTAL mailbox
@@ -48,7 +51,11 @@ scratch.
    the run starts afresh, already-finished stages show "nothing to do" or
    finish quickly, and the stage carries on from where it stopped: messages
    already handled are skipped at once (the done count races past them) and
-   only the rest go to the model.
+   only the rest go to the model. The Counts panel keeps its figures while
+   paused and, once the stage has walked past the work done before the pause,
+   shows the same totals as before and goes on from there (for example
+   "classified 8" when paused, then 9, 10 … up to every message): no count
+   drops back to what this launch alone did.
 6. **Quit mid-run and resume on the next launch.** During extract, press `q`.
    The status line says "Stopping after the current message… (press q again
    to quit now)"; when that message is done the application closes and the
