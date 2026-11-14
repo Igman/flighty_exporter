@@ -10,7 +10,8 @@ Keys: ``p`` pauses (the engine stops after the message in progress) and
 continues (a fresh run, which skips what is done); ``r`` retries after a
 model-server problem (not after a refused non-local address: the config is
 read at launch, so only relaunching after changing it can help); ``q`` quits, waiting for the message in progress
-(``q`` or Ctrl-C again quits at once).
+(``q`` or Ctrl-C again quits at once); ``enter``, once the run has finished,
+opens the review (``FlightyApp.open_review``).
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ ADDRESS_HINT = (
     "machine, or set `allow_remote = true` under [ollama] in the config file, then start "
     "flighty-exporter again. Press q to quit."
 )
-REVIEW_NEXT = "Reviewing the flights will happen in the next screen once it exists; for now, press q to quit."
+REVIEW_NEXT = "Press enter to review the flights, or q to quit."
 
 def human_duration(seconds: float) -> str:
     minutes = round(seconds / 60)
@@ -180,6 +181,7 @@ class ProgressScreen(Screen):
         Binding("p", "pause", "Pause"),
         Binding("p", "resume", "Continue"),
         Binding("r", "retry", "Retry"),
+        Binding("enter", "open_review", "Review flights"),
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit", show=False, priority=True),
     ]
@@ -214,6 +216,7 @@ class ProgressScreen(Screen):
         self.stages: dict[str, str] = {}  # stage -> its state, in the engine's order
         self.notes: dict[str, str] = {}  # stage -> the note it finished with
         self.counts: dict[str, list[str]] = {}
+        self.report: RunReport | None = None  # the finished run's report, once there is one
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="body"):
@@ -300,6 +303,7 @@ class ProgressScreen(Screen):
             # The config is read at launch, so retrying cannot fix an address problem.
             self._show_problem(event.message, retry=event.kind != ADDRESS)
         elif isinstance(event, RunFinished):
+            self.report = event.report
             report = self.query_one("#report", Static)
             report.update(escape(format_report(event.report)) + "\n\n" + REVIEW_NEXT)
             report.display = True
@@ -334,6 +338,9 @@ class ProgressScreen(Screen):
             return self.view == PAUSED
         if action == "retry":
             return self.view == PROBLEM
+        if action == "open_review":
+            # Only a complete run is reviewed: not after a pause, a stop or a problem.
+            return self.view == FINISHED_VIEW and self.report is not None
         return True
 
     def action_pause(self) -> None:
@@ -345,6 +352,9 @@ class ProgressScreen(Screen):
 
     def action_retry(self) -> None:
         self.start_run()
+
+    def action_open_review(self) -> None:
+        self.app.open_review(self.report)  # type: ignore[attr-defined]
 
     def action_quit(self) -> None:
         self.request_quit()

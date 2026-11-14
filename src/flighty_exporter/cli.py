@@ -44,12 +44,12 @@ from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, r
 from .engine.report import format_report
 from .engine.events import AUDIT, INCLUDE, STOPPED
 from .engine.thorough import format_include
-from .flights.decisions import is_date, resolve_key
+from .flights.decisions import InvalidCorrection, is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
 from .ollama.extraction import ExtractionClient
-from .output import export, review, sources
+from .output import decide, export, flight_view, review, sources
 from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
@@ -216,7 +216,14 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
     if from_store and not store_path.is_file():
         print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
         return EXIT_ERROR
+    if args.dry_run and not from_store:
+        raise UsageError("--dry-run shows what exporting from the store would do; pass --from-store with it")
     try:
+        if args.dry_run:
+            with Store(store_path) as store:
+                plan = export.plan_store_export(config, store, config.export_data_dir, config.export_data_url)
+            print(export.format_plan(plan))
+            return EXIT_OK
         if from_store:
             with Store(store_path) as store:
                 summary = export.run_store_export(
@@ -240,11 +247,7 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
 
 def _record_export(store: Store, summary: export.ExportSummary) -> None:
     """Record the files an export wrote for the session in ``store``."""
-    if summary.import_path is not None:
-        session.record_written(store, session.IMPORT_FILE, summary.import_path)
-    if summary.manual_add_path is not None:
-        session.record_written(store, session.MANUAL_ADD_LIST, summary.manual_add_path)
-    session.touch(store)
+    session.record_export(store, summary.import_path, summary.manual_add_path)
 
 
 COMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None], Callable[..., int]]] = {}
@@ -335,6 +338,12 @@ def _export_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="export the store's flight list with the saved review decisions, even if a review table exists",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --from-store: print what the export would write (the flights for the import file, and the "
+        "manual-add list with reasons and ticks) and write nothing",
+    )
 
 
 COMMANDS["export"] = (
@@ -356,12 +365,16 @@ def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
     origin, destination = args.route or ("", "")
     with Store(store_path) as store:
         key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
-        store.set_added(key, not args.undo)
-        session.touch(store)
+        # A manual-add list an export already wrote follows the tick at once.
+        refreshed, problems = session.tick_manual_add(store, key, not args.undo)
+    for problem in problems:
+        _warn(f"warning: {problem}")
     if args.undo:
         print(f"Flight {key} is no longer marked as added in Flighty.")
     else:
         print(f"Flight {key} is marked as added in Flighty; export shows it as done on the manual-add list.")
+    for path in refreshed:
+        print(f"Manual-add list updated: {path}")
     return EXIT_OK
 
 
@@ -413,6 +426,107 @@ COMMANDS["sources"] = (
     "list each flight review would list with its source emails and their saved text (needs only the store)",
     _sources_arguments,
     cmd_sources,
+)
+
+
+def cmd_flights(args: argparse.Namespace, config: Config) -> int:
+    if args.year is not None and not (len(args.year) == 4 and args.year.isdigit()):
+        raise UsageError(f"--year {args.year!r} is not a year (YYYY)")
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    filters = flight_view.Filters(flagged=args.flagged, not_kept=args.not_kept, year=args.year)
+    with Store(store_path) as store:
+        flight_list = review.build_flight_list(config, store)
+    print(flight_view.format_flights(flight_list, filters, config.thoroughness))
+    return EXIT_OK
+
+
+def _flights_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    parser.add_argument("--flagged", action="store_true", help="only flights needing attention")
+    parser.add_argument("--not-kept", action="store_true", help="only flights not kept")
+    parser.add_argument("--year", metavar="YYYY", help="only flights in this year")
+
+
+COMMANDS["flights"] = (
+    "list the flights as the review screen shows them (flights needing attention first), with the totals, "
+    "the bookings dropped as other passengers' and the emails that could not be read (reads only)",
+    _flights_arguments,
+    cmd_flights,
+)
+
+
+CORRECTABLE = ("date", "flight_number", "origin", "destination")
+
+
+def cmd_decide(args: argparse.Namespace, config: Config) -> int:
+    if bool(args.flight_number) == bool(args.route):
+        raise UsageError("give the flight number, or --route ORIGIN DEST for a flight without one (not both)")
+    typed: dict[str, str] = {}
+    for item in args.set or ():
+        name, sep, value = item.partition("=")
+        if not sep or name.strip() not in CORRECTABLE:
+            raise UsageError(
+                f"--set {item!r}: give field=value, the field being date, flight_number, origin or destination"
+            )
+        typed[name.strip()] = value
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    origin, destination = args.route or ("", "")
+    with Store(store_path) as store:
+        reviewer = decide.Reviewer.load(config, store)
+        try:
+            key = reviewer.find(args.date, args.flight_number or "", origin, destination).key
+        except decide.FlightNotFound as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        if args.keep or args.drop:
+            reviewed = reviewer.set_keep(store, key, args.keep)
+        elif args.reset:
+            reviewed = reviewer.reset(store, key)
+        else:
+            segment = reviewer.get(key).flight.segment
+            # A field not given keeps the value it now shows.
+            values = [typed.get(name, getattr(segment, name)) for name in CORRECTABLE]
+            try:
+                reviewed = reviewer.correct(store, key, *values)
+            except InvalidCorrection as exc:
+                print(f"error: {exc}; nothing was saved", file=sys.stderr)
+                return EXIT_ERROR
+        session.touch(store)
+    print("\n".join(flight_view.detail_lines(reviewed)))
+    return EXIT_OK
+
+
+def _decide_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("date", help="the flight's date, YYYY-MM-DD, as it now shows (after any correction)")
+    parser.add_argument("flight_number", nargs="?", help="the flight number, as it now shows")
+    parser.add_argument(
+        "--route", nargs=2, metavar=("ORIGIN", "DEST"), help="origin and destination, for a flight without a number"
+    )
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--keep", action="store_true", help="keep the flight")
+    action.add_argument("--drop", action="store_true", help="do not keep the flight")
+    action.add_argument("--reset", action="store_true", help="clear the flight's keep choice and corrections")
+    action.add_argument(
+        "--set",
+        action="append",
+        metavar="FIELD=VALUE",
+        help="correct date, flight_number, origin or destination (repeat for several fields); "
+        "a value equal to what the tool found clears that correction",
+    )
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+
+
+COMMANDS["decide"] = (
+    "make one review decision, as the review screen does: keep or drop a flight, correct its date, flight "
+    "number, origin or destination, or clear its decision; saved at once, then the flight's new state is printed",
+    _decide_arguments,
+    cmd_decide,
 )
 
 

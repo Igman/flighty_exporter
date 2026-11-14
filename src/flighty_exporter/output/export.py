@@ -34,6 +34,13 @@ Two sources (the command line picks one, see ``cli.cmd_export``):
 
 The manual-add list's last column, done, shows the store's manual-add tick
 for the flight (set by ``mark-added``).
+
+For the export screen and ``export --dry-run``: ``plan_store_export`` says
+what ``run_store_export`` would write without writing anything (the latter
+writes exactly that plan); ``refresh_manual_add`` rewrites a written
+manual-add list with the current ticks only; ``reveal`` shows a file in the
+system file manager (macOS only); ``FLIGHTY_IMPORT_STEPS`` is the verified
+import procedure.
 """
 
 from __future__ import annotations
@@ -41,17 +48,21 @@ from __future__ import annotations
 import csv
 import io
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..flights.decisions import ReviewDecision, ReviewedFlight, is_date, resolve_key
-from ..flights.validate import normalise_airport, normalise_flight_number
+from ..flights.decisions import (
+    Corrections, InvalidCorrection, ReviewDecision, ReviewedFlight, keep_override, resolve_key,
+    typed_corrections,
+)
 from ..store import Store
 from ..tables import write_csv
 from . import openflights as import_format
-from .review import DECISIONS_DISCARDED, build_flight_list, discard_stale_decisions
+from .review import DECISIONS_DISCARDED, FlightList, build_flight_list, discard_stale_decisions
 
 MANUAL_ADD_NAME = "manual-add.csv"
 MANUAL_ADD_COLUMNS = (
@@ -90,6 +101,37 @@ class KeptRow:
     flight_id: str = ""
 
 
+@dataclass(frozen=True)
+class ManualAddEntry:
+    """A flight of the manual-add list: what the list shows, the flight's key
+    (for ticking it with ``Store.set_added``) and whether it is ticked."""
+
+    flight_key: str
+    date: date
+    origin: str
+    destination: str
+    flight_number: str
+    reason: str
+    message_date: str = ""
+    message_subject: str = ""
+    ticked: bool = False
+
+
+@dataclass
+class ExportPlan:
+    """What an export would do, before anything is written: the flights for
+    the import file, the manual-add list, and how many rows were not kept or
+    rejected as invalid. ``run_store_export`` writes exactly this."""
+
+    store_path: Path | None = None
+    rows: int = 0
+    not_kept: int = 0
+    invalid: list[tuple[int, str]] = field(default_factory=list)
+    exported: list[import_format.Flight] = field(default_factory=list)  # in date order
+    manual_add: list[ManualAddEntry] = field(default_factory=list)  # in date order
+    reference: import_format.OpenFlights | None = field(default=None, repr=False)  # loaded if needed
+
+
 @dataclass
 class ExportSummary:
     review_path: Path
@@ -104,6 +146,8 @@ class ExportSummary:
     from_store: bool = False  # exported from the store's flight list, not from the review table
     decisions_recorded: int = 0
     decisions_discarded: int = 0
+    # The manual-add list's flights, with their keys and ticks, as written.
+    manual_add_entries: list[ManualAddEntry] = field(default_factory=list)
 
 
 def run_export(
@@ -138,13 +182,30 @@ def run_store_export(
     now: datetime | None = None,
 ) -> ExportSummary:
     """Export from the store's flight list with the saved decisions applied:
-    the rows the review table would hold, read the same way."""
-    flight_list = build_flight_list(config, store)
+    the rows the review table would hold, read the same way. Writes what
+    ``plan_store_export`` returns."""
+    plan, flight_list = _store_plan(config, store, data_dir, data_url)
     summary = ExportSummary(config.review_output, store_path=store.path, from_store=True)
     summary.decisions_discarded = discard_stale_decisions(store, flight_list)
+    summary.rows, summary.not_kept, summary.invalid = plan.rows, plan.not_kept, plan.invalid
+    return _write(plan, summary, output_dir, now)
+
+
+def plan_store_export(config: Config, store: Store, data_dir: Path, data_url: str) -> ExportPlan:
+    """What ``run_store_export`` would write, without writing anything (the
+    store is not changed either). Loads the reference data when a kept
+    flight needs it; raises ReferenceDataError if that fails."""
+    return _store_plan(config, store, data_dir, data_url)[0]
+
+
+def _store_plan(config: Config, store: Store, data_dir: Path, data_url: str) -> tuple[ExportPlan, FlightList]:
+    flight_list = build_flight_list(config, store)
     rows = [(number, _cells(reviewed)) for number, reviewed in enumerate(flight_list.flights, 2)]
-    kept = _kept_rows(rows, summary)
-    return _export(kept, summary, output_dir, data_dir, data_url, now, store.review_decisions())
+    counts = ExportSummary(config.review_output)
+    kept = _kept_rows(rows, counts)
+    plan = _plan(kept, data_dir, data_url, store.review_decisions())
+    plan.store_path, plan.rows, plan.not_kept, plan.invalid = store.path, counts.rows, counts.not_kept, counts.invalid
+    return plan, flight_list
 
 
 def record_decisions(config: Config, store: Store, rows: list[ReviewRow]) -> tuple[int, int]:
@@ -159,28 +220,26 @@ def record_decisions(config: Config, store: Store, rows: list[ReviewRow]) -> tup
     decisions discarded because their flight is no longer produced)."""
     before = store.review_decisions()
     flights = {reviewed.key: reviewed for reviewed in build_flight_list(config, store).flights}
-    wanted: dict[str, tuple[bool, str, str, str, str]] = {}
+    wanted: dict[str, tuple[bool, Corrections]] = {}
     for _, cells in rows:
         key = cells.get("flight_id", "")
         keep = _keep_value(cells.get("keep", ""))
-        day, origin, destination = cells.get("date", ""), cells.get("origin", ""), cells.get("destination", "")
-        if key not in flights or keep is None or not is_date(day) or not origin or not destination:
+        if key not in flights or keep is None:
             continue
-        wanted[key] = (keep, day, normalise_flight_number(cells.get("flight_number", "")),
-                       normalise_airport(origin), normalise_airport(destination))
-    for key, (_, day, number, origin, destination) in wanted.items():
-        original = flights[key].original
-        store.save_corrections(
-            key,
-            date=day if day != original.date else None,
-            flight_number=number if number != original.flight_number else None,
-            origin=origin if origin != original.origin else None,
-            destination=destination if destination != original.destination else None,
-        )
+        try:
+            found = typed_corrections(
+                flights[key].original, cells.get("date", ""), cells.get("flight_number", ""),
+                cells.get("origin", ""), cells.get("destination", ""),
+            )
+        except InvalidCorrection:
+            continue
+        wanted[key] = (keep, found)
+    for key, (_, found) in wanted.items():
+        store.save_corrections(key, found.date, found.flight_number, found.origin, found.destination)
     flight_list = build_flight_list(config, store)
     corrected = {reviewed.key: reviewed for reviewed in flight_list.flights}
-    for key, (keep, *_) in wanted.items():
-        store.save_keep(key, keep if keep != corrected[key].preset_keep else None)
+    for key, (keep, _) in wanted.items():
+        store.save_keep(key, keep_override(keep, corrected[key].preset_keep))
     after = store.review_decisions()
     recorded = sum(1 for key in wanted if _choices(before.get(key)) != _choices(after.get(key)))
     return recorded, discard_stale_decisions(store, flight_list)
@@ -224,7 +283,14 @@ def _export(
     now: datetime | None,
     decisions: dict[str, ReviewDecision],
 ) -> ExportSummary:
+    return _write(_plan(kept, data_dir, data_url, decisions), summary, output_dir, now)
 
+
+def _plan(
+    kept: list[KeptRow], data_dir: Path, data_url: str, decisions: dict[str, ReviewDecision]
+) -> ExportPlan:
+    """Sort the kept rows into the import file and the manual-add list."""
+    plan = ExportPlan()
     manual: list[tuple[KeptRow, str]] = []
     candidates: list[KeptRow] = []
     for row in kept:
@@ -240,48 +306,105 @@ def _export(
 
     exported: list[KeptRow] = []
     if candidates:
-        reference = import_format.OpenFlights.load(data_dir, data_url)
+        plan.reference = import_format.OpenFlights.load(data_dir, data_url)
         for row in candidates:
-            reasons = reference.unmatched(row.flight)
+            reasons = plan.reference.unmatched(row.flight)
             if reasons:
                 manual.append((row, "; ".join(reasons)))
             else:
                 exported.append(row)
-        if exported:
-            now = now or datetime.now(timezone.utc)
-            summary.import_path = reference.write_backup([r.flight for r in exported], output_dir, now)
-            summary.exported = len(exported)
+    exported.sort(key=lambda row: (row.flight.date, row.row_number))
+    plan.exported = [row.flight for row in exported]
 
     manual.sort(key=lambda item: (item[0].flight.date, item[0].row_number))
+    plan.manual_add = [
+        ManualAddEntry(
+            _key(row, decisions), row.flight.date, row.flight.origin, row.flight.destination,
+            row.flight.flight_number, reason, row.message_date, row.message_subject, _ticked(row, decisions),
+        )
+        for row, reason in manual
+    ]
+    return plan
+
+
+def _write(plan: ExportPlan, summary: ExportSummary, output_dir: Path, now: datetime | None) -> ExportSummary:
+    """Write the import file (if any flight goes in it) and the manual-add list of ``plan``."""
+    if plan.exported:
+        assert plan.reference is not None
+        now = now or datetime.now(timezone.utc)
+        summary.import_path = plan.reference.write_backup(plan.exported, output_dir, now)
+        summary.exported = len(plan.exported)
     summary.manual_add_path = output_dir / MANUAL_ADD_NAME
+    write_manual_add(summary.manual_add_path, plan.manual_add)
+    summary.manual_add = len(plan.manual_add)
+    summary.manual_add_entries = list(plan.manual_add)
+    return summary
+
+
+def write_manual_add(path: Path, entries: list[ManualAddEntry]) -> None:
+    """Write the manual-add list at ``path``."""
     write_csv(
-        summary.manual_add_path,
+        path,
         MANUAL_ADD_COLUMNS,
         [
             {
-                "date": row.flight.date.isoformat(),
-                "origin": row.flight.origin,
-                "destination": row.flight.destination,
-                "flight_number": row.flight.flight_number,
-                "reason": reason,
-                "message_date": row.message_date,
-                "message_subject": row.message_subject,
-                "done": "yes" if _ticked(row, decisions) else "",
+                "date": entry.date.isoformat(),
+                "origin": entry.origin,
+                "destination": entry.destination,
+                "flight_number": entry.flight_number,
+                "reason": entry.reason,
+                "message_date": entry.message_date,
+                "message_subject": entry.message_subject,
+                "done": "yes" if entry.ticked else "",
             }
-            for row, reason in manual
+            for entry in entries
         ],
     )
-    summary.manual_add = len(manual)
-    return summary
+
+
+def refresh_manual_add(store: Store, path: Path) -> list[ManualAddEntry]:
+    """Rewrite the manual-add list at ``path`` (written by an earlier export)
+    with the store's current ticks, changing nothing else: the import file
+    and the flights on the list stay as that export wrote them. Returns the
+    list's flights with their keys and ticks. Raises ExportError if the file
+    cannot be read as a manual-add list."""
+    decisions = store.review_decisions()
+    entries = []
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        raise ExportError(f"cannot read the manual-add list {path}: {exc}") from exc
+    for cells in rows:
+        day = _parse_date((cells.get("date") or "").strip())
+        if day is None:
+            raise ExportError(f"the manual-add list {path} has a row without a real date; run export again.")
+        row = KeptRow(
+            0,
+            import_format.Flight(day, cells.get("origin") or "", cells.get("destination") or "",
+                                 cells.get("flight_number") or ""),
+            cells.get("message_date") or "",
+            cells.get("message_subject") or "",
+        )
+        entries.append(ManualAddEntry(
+            _key(row, decisions), day, row.flight.origin, row.flight.destination, row.flight.flight_number,
+            cells.get("reason") or "", row.message_date, row.message_subject, _ticked(row, decisions),
+        ))
+    write_manual_add(path, entries)
+    return entries
+
+
+def _key(row: KeptRow, decisions: dict[str, ReviewDecision]) -> str:
+    """The key of the flight this row shows (its flight_id, if it has one)."""
+    flight = row.flight
+    return row.flight_id or resolve_key(
+        decisions, flight.date.isoformat(), flight.flight_number, flight.origin, flight.destination
+    )
 
 
 def _ticked(row: KeptRow, decisions: dict[str, ReviewDecision]) -> bool:
     """Whether the user has ticked this manual-add flight (``mark-added``)."""
-    flight = row.flight
-    key = row.flight_id or resolve_key(
-        decisions, flight.date.isoformat(), flight.flight_number, flight.origin, flight.destination
-    )
-    decision = decisions.get(key)
+    decision = decisions.get(_key(row, decisions))
     return decision is not None and decision.added
 
 
@@ -423,3 +546,65 @@ def format_summary(summary: ExportSummary) -> str:
     if summary.invalid:
         lines.append("Fix the rejected rows in the review table and run export again.")
     return "\n".join(lines)
+
+
+def format_plan(plan: ExportPlan) -> str:
+    """What an export from the store would do (``export --from-store
+    --dry-run``): the counts, the flights for the import file, and the
+    manual-add list with each flight's tick ([x]) and reason."""
+    lines = ["Dry run: nothing was written."]
+    lines.append(f"Flight list read from the store {plan.store_path}")
+    lines.append(f"  flights to export:          {len(plan.exported)}")
+    lines.append(f"  flights to add by hand:     {len(plan.manual_add)}")
+    lines.append(f"  not kept:                   {plan.not_kept}")
+    lines.append(f"  rejected as invalid:        {len(plan.invalid)}")
+    for row_number, reason in plan.invalid:
+        lines.append(f"    row {row_number}: {reason}")
+    lines.append("Import file would hold:")
+    lines += [f"  {_flight_line(f.date, f.flight_number, f.origin, f.destination)}" for f in plan.exported] or [
+        "  nothing (no import file would be written)"]
+    lines.append("Manual-add list would hold:")
+    lines += [
+        f"  [{'x' if e.ticked else ' '}] {_flight_line(e.date, e.flight_number, e.origin, e.destination)}  {e.reason}"
+        for e in plan.manual_add
+    ] or ["  nothing"]
+    return "\n".join(lines)
+
+
+def _flight_line(day: date, flight_number: str, origin: str, destination: str) -> str:
+    return f"{day.isoformat()}  {(flight_number or '-').ljust(6)}  {origin}-{destination}"
+
+
+# The steps for importing into Flighty, saying only what was verified (see
+# the README's "Importing into Flighty"); shown on the export screen.
+FLIGHTY_IMPORT_STEPS = """\
+To import the file into Flighty:
+1. In Flighty, go to Settings, Import Flights, and choose OpenFlights.
+2. Flighty's import works by sending the file to an address it gives you: send the import file to that address.
+3. Flights older than a year need Flighty Pro.
+4. Enter each flight on the manual-add list by hand in Flighty: it needs the two airports and the date.
+
+A file generated this way was accepted in November 2026, and a flight Flighty already had was not imported \
+twice. Flighty documents support only for files exported by OpenFlights itself, so this could stop working."""
+
+
+def reveal_command(path: Path, platform: str = sys.platform) -> list[str] | None:
+    """The command that shows ``path`` selected in the system file manager,
+    or None where that is not supported (only macOS is: ``open -R``)."""
+    if platform == "darwin":
+        return ["open", "-R", str(path)]
+    return None
+
+
+def reveal(path: Path) -> bool:
+    """Show ``path`` in the system file manager. False if this system is not
+    supported or the command could not be run: the caller shows the path."""
+    command = reveal_command(path)
+    if command is None:
+        return False
+    try:
+        completed = subprocess.run(command, check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
