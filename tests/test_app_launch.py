@@ -1,8 +1,9 @@
 """The bare command: with no subcommand it opens the terminal application,
 but only when both input and output are a terminal. Anywhere else (a pipe, a
-script, a log) it prints the same usage error as before the application
-existed, so automation never hangs. The application's screens themselves
-are verified by hand (see docs/manual-checks.md)."""
+script, a log) it prints the help (the same text as ``--help``) and a line
+saying a command is needed there, and exits with status 2, so automation
+never hangs and a script that forgot its command still fails. The
+application's screens themselves are verified by hand (see docs/manual-checks.md)."""
 
 from __future__ import annotations
 
@@ -10,25 +11,30 @@ import os
 import pty
 import subprocess
 import sys
+import threading
 
-USAGE_ERROR = (
-    "usage: flighty-exporter [-h] [--config CONFIG] command ...\n"
-    "flighty-exporter: error: the following arguments are required: command\n"
+NOT_A_TERMINAL = (
+    "error: the application opens only in a terminal (input and output both a terminal); "
+    "otherwise give a command, such as run\n"
 )
 
 
-def test_the_bare_command_without_a_terminal_prints_usage_as_before(workspace):
+def test_the_bare_command_without_a_terminal_prints_help_and_fails(workspace):
     result = workspace.run()
     assert result.returncode == 2
-    assert result.stdout == ""
-    assert result.stderr == USAGE_ERROR
+    assert result.stdout == workspace.run("--help").stdout
+    assert result.stdout.startswith("usage: flighty-exporter")
+    assert "pull-models" in result.stdout
+    assert result.stderr == NOT_A_TERMINAL
 
 
 def _run_with_one_terminal_end(workspace, *, terminal: str) -> tuple[int, str]:
-    """Run the bare command with only stdin or only stdout on a terminal."""
+    """Run the bare command with only stdin or only stdout on a terminal.
+    The terminal end is read while the command runs (the help it prints
+    would otherwise fill the terminal's buffer)."""
     controller, terminal_end = pty.openpty()
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             workspace.command(),
             cwd=workspace.root,
             env=workspace.env(),
@@ -36,20 +42,33 @@ def _run_with_one_terminal_end(workspace, *, terminal: str) -> tuple[int, str]:
             stdout=terminal_end if terminal == "stdout" else subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=30,
         )
-    finally:
         os.close(terminal_end)
+        terminal_end = -1
+        reader = threading.Thread(target=_drain, args=(controller,), daemon=True)
+        reader.start()
+        _, stderr = proc.communicate(timeout=30)
+    finally:
+        if terminal_end != -1:
+            os.close(terminal_end)
         os.close(controller)
-    return proc.returncode, proc.stderr
+    return proc.returncode, stderr
+
+
+def _drain(descriptor: int) -> None:
+    try:
+        while os.read(descriptor, 4096):
+            pass
+    except OSError:
+        pass
 
 
 def test_the_bare_command_needs_input_to_be_a_terminal_too(workspace):
-    assert _run_with_one_terminal_end(workspace, terminal="stdout") == (2, USAGE_ERROR)
+    assert _run_with_one_terminal_end(workspace, terminal="stdout") == (2, NOT_A_TERMINAL)
 
 
 def test_the_bare_command_needs_output_to_be_a_terminal_too(workspace):
-    assert _run_with_one_terminal_end(workspace, terminal="stdin") == (2, USAGE_ERROR)
+    assert _run_with_one_terminal_end(workspace, terminal="stdin") == (2, NOT_A_TERMINAL)
 
 
 def test_the_subcommands_do_not_load_the_application(workspace):

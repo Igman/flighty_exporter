@@ -77,7 +77,9 @@ writes goes next to the config file.
 The bare command (`uv run flighty-exporter`, or
 `uv run flighty-exporter --config FILE`) opens the application when both
 input and output are a terminal. Outside a terminal (piped, or from a script) it
-prints the usage line and exits with status 2; use [`run`](#run) there.
+prints the help (as `--help` does) and a line saying the application opens
+only in a terminal and a command is needed otherwise, and exits with status
+2; use [`run`](#run) there.
 Ctrl-Q quits from any screen.
 
 The screens, in the order you meet them:

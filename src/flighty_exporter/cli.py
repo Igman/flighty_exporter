@@ -1,7 +1,8 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
 With no command, in a terminal, it opens the full-screen application (see
-``app``); outside a terminal it fails with the usage line as before.
+``app``); outside a terminal it prints the help, says a command is
+needed there, and exits with status 2.
 
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
 ``extract``, ``review``, ``audit`` and ``export``; ``run`` performs
@@ -833,6 +834,11 @@ COMMANDS["pull-models"] = (
     cmd_pull_models,
 )
 
+NOT_A_TERMINAL = (
+    "error: the application opens only in a terminal (input and output both a terminal); "
+    "otherwise give a command, such as run"
+)
+
 # Commands that load the config file themselves (``setup`` may create it).
 LOADS_OWN_CONFIG = {"setup"}
 
@@ -868,8 +874,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None and not (sys.stdin.isatty() and sys.stdout.isatty()):
-        # Outside a terminal the bare command fails as when a command was required.
-        parser.error("the following arguments are required: command")
+        # Outside a terminal the bare command prints help, and still fails so
+        # that a script which forgot its command notices.
+        parser.print_help()
+        sys.stdout.flush()
+        print(NOT_A_TERMINAL, file=sys.stderr)
+        return EXIT_USAGE
     try:
         if args.command in LOADS_OWN_CONFIG:
             return args.handler(args, None)

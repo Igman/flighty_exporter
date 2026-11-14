@@ -64,8 +64,9 @@ difference in the walkthrough record.
 ## 1. Launching
 
 1. **Not a terminal.** `fe | cat` and `fe < /dev/null` do not open the
-   application: each prints the usage line and "error: the following
-   arguments are required: command" on stderr and exits with status `2`.
+   application: each prints the help (the same text as `fe --help`) and
+   then, on stderr, "error: the application opens only in a terminal …
+   otherwise give a command, such as run", and exits with status `2`.
 2. **Help.** `fe --help` lists every command; each `fe <command> --help`
    matches the [command reference](../README.md#command-reference).
 
