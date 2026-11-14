@@ -556,7 +556,9 @@ uv run flighty-exporter run [--mailbox MAILBOX] [--store STORE] [--allow-remote]
 
 The application's run without the screen, for scripts and SSH: classify,
 extract (Thorough: audit and include), then review, printing each stage's
-start, progress and summary, then the end-of-run report, ending with the
+start, progress and summary (each stage's summary ends with `Session
+totals so far:`, the figures the application's Counts panel shows), then the
+end-of-run report, ending with the
 files written and `Next step: check <path>/review.csv, then run export.` It
 resumes an
 existing session by default and never asks a question. `--thoroughness`
@@ -735,7 +737,8 @@ still exists), what it was started with, when it started and was last
 active, the messages recorded (messages under Spam, Trash, Drafts and Chat
 are not counted), classified, resolved from machine-readable data, at or
 above the threshold in use, extracted, failed, flights and flights with a
-saved decision, whether it is complete and finished, the threshold in use
+saved decision, whether it is complete and finished, where it stands (the
+sentence the application's startup prompt shows), the threshold in use
 (for example `0.02 (lowered for this session from the configured 0.05)`),
 the files written that still exist, and what starting fresh would lose.
 With no store it prints `No session yet.` `--fresh-preview` lists what

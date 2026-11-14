@@ -166,7 +166,8 @@ resume from the startup prompt, section 6).
 3. **Counts.** Classify: classified, resolved from machine-readable data,
    skipped, failed; extract: "extracted N of M" and failed. They are the
    session's totals: after classify, the four add up to the messages in the
-   mailbox.
+   mailbox. `fe run` prints the same figures after each stage as "Session
+   totals so far: …".
 4. **Pause and continue.** `p`: "Pausing after the current message…", then
    "Paused. Press p to continue."; the stage reads "stopped" and no further
    requests reach Ollama (`ollama ps`). `p` again: finished stages show
@@ -249,7 +250,9 @@ same flights in the same order.
 8. **Source emails.** `enter` on BA286: "[1/2]" and "[2/2]" (or more) with
    each email's date and subject and its saved text (From, Subject, Date,
    body, PDF text); it scrolls; Escape returns to the same flight. Rename
-   `test.mbox` away first: the text still shows.
+   `test.mbox` away first: the text still shows. The heading matches the
+   flight's line in `fe sources`; a flight without a number reads "(no
+   flight number)".
 9. **Lists.** `d`: "Bookings dropped as other passengers': N", one line per
    booking (reference, passengers, flights, first date); Escape returns.
    `x`: "Emails that could not be read: N", one line per email; Escape
@@ -317,7 +320,8 @@ From the review press `e`. Compare with `fe export --from-store --dry-run`.
    Trash, Drafts and Chat are not counted)" under it (fix c), extract "N of
    M likely flight emails extracted", review, threshold and files; then "The
    run is unfinished" with what is left. Footer `r Resume`, `f Start fresh`,
-   `q Quit`. The figures match `fe session`.
+   `q Quit`. The figures match `fe session`, and the sentence about the run
+   is its "where it stands" line.
 2. **Resume unfinished.** `r`: the progress screen carries on.
 3. **Finished session.** After a finished run, relaunch: "The run is
    complete. Resuming opens its review." `r` opens the review at once with
