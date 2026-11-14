@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "pypdf>=7.1.0",
+    "textual>=8.2,<9",
 ]
 
 [project.scripts]
