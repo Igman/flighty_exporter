@@ -236,6 +236,9 @@ def start_fresh(store_path: Path, *, preview: bool = False) -> FreshResult:
     result = FreshResult(store_path, store_existed=store_path.is_file(), preview=preview)
     if not result.store_existed:
         return result
+    store_files = [store_path] + [Path(f"{store_path}{suffix}") for suffix in STORE_SIDE_SUFFIXES]
+    # Noted before the store is opened: SQLite may tidy side files away itself.
+    present = {path for path in store_files if path.is_file()}
     with Store(store_path) as store:
         recorded = [WrittenFile(kind, path, at) for kind, path, at in store.written_files()]
         result.files_known = store.session_value(STARTED_AT) is not None
@@ -253,10 +256,10 @@ def start_fresh(store_path: Path, *, preview: bool = False) -> FreshResult:
         if not preview:
             written.path.unlink()
         result.deleted.append(written)
-    for path in [store_path] + [Path(f"{store_path}{suffix}") for suffix in STORE_SIDE_SUFFIXES]:
-        if path.is_file():
+    for path in store_files:
+        if path in present or path.is_file():
             if not preview:
-                path.unlink()
+                path.unlink(missing_ok=True)
             result.store_files.append(path)
     return result
 
