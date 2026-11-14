@@ -1,7 +1,7 @@
 """Review table: write the review CSV and the failures file from the store.
 
 The extraction records of every message selected for extraction (gate at or
-above the threshold) that has a record from the configured extraction model,
+above the session's effective threshold, see ``threshold``) that has a record from the configured extraction model,
 and of every message resolved from its own machine-readable data (markup
 records have no gate and are always included), are normalised and checked (see ``validate``) and consolidated (see
 ``consolidate``) into one row per flight, keeping only bookings for the

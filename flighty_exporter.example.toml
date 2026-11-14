@@ -89,6 +89,14 @@ names = []
 sample_size = 25
 seed = 1
 output = "audit.csv"
+# Thorough runs (see [run]) audit after extract. When the audit finds flight
+# emails below the threshold, the run takes the lower edge of the lowest band
+# with a hit and counts the messages that threshold would add that have no
+# extraction yet. If there are at most this many, it lowers the threshold for
+# this session only (stored in the store; this file is never changed) and
+# extracts them; otherwise it changes nothing and says how to include them.
+# 0 lowers it only when the audit already extracted all of them.
+auto_include_budget = 2000
 
 [export]
 # Where `export` writes the import file for Flighty
@@ -106,5 +114,6 @@ data_url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
 [run]
 # How hard `run` looks for flight emails the first filter missed. "quick"
 # (the default) runs classify, extract and review, and no audit. "thorough"
-# is not available yet. Can also be given with `run --thoroughness`.
+# also runs the audit after extract and acts on it within
+# [audit] auto_include_budget. Can also be given with `run --thoroughness`.
 thoroughness = "quick"

@@ -486,7 +486,8 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
         "--thoroughness",
         choices=("quick", "thorough"),
         help="how hard to look for flight emails the first filter missed (overrides [run] thoroughness); "
-        "quick runs no audit",
+        "quick runs no audit; thorough audits after extract and, within [audit] auto_include_budget, lowers the "
+        "threshold for this session",
     )
     parser.add_argument("--output", help="review CSV to write (overrides [review] output in config)")
     parser.add_argument("--failures", help="failures CSV to write (overrides [review] failures in config)")
