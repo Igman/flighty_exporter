@@ -47,13 +47,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from .config import Config
+from ..config import Config
+from ..mail.reader import Mailbox, Message
+from ..ollama.extraction import ExtractionClient, ExtractionRecord
+from ..output.review import _message_date, write_csv
+from ..progress import Progress
+from ..store import Store
 from .extract import ExtractSummary, extract_messages
-from .extraction_client import ExtractionClient, ExtractionRecord
-from .mailbox_reader import Mailbox, Message
-from .progress import Progress
-from .review import _message_date, write_csv
-from .store import Store
 
 BAND_EDGES = (0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
 

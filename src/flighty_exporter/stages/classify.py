@@ -19,12 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from .config import Config
-from .decision_client import EMAIL_TYPES, DecisionClient, DecisionError
-from .mailbox_reader import Mailbox, Message, Skipped, Unreadable
-from .markup import parse_markup
-from .progress import Progress
-from .store import Store
+from ..config import Config
+from ..mail.markup import parse_markup
+from ..mail.reader import Mailbox, Message, Skipped, Unreadable
+from ..ollama.decision import EMAIL_TYPES, DecisionClient, DecisionError
+from ..progress import Progress
+from ..store import Store
 
 PASS_NAME = "classify"
 GATE_BANDS = (0.5, 0.2, 0.05)

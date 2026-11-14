@@ -44,8 +44,8 @@ from dataclasses import replace
 from datetime import date, timedelta
 from typing import Protocol
 
+from ..ollama.extraction import ExtractionRecord, Segment
 from .consolidate import Flight
-from .extraction_client import ExtractionRecord, Segment
 
 UNKNOWN_AIRPORT = "unknown airport"
 UNKNOWN_AIRLINE = "unknown airline"

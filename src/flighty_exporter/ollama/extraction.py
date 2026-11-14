@@ -31,8 +31,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from .decision_client import OllamaUnreachable
-from .mailbox_reader import Message
+from ..mail.reader import Message
+from .decision import OllamaUnreachable
 from .preflight import OLLAMA_OPENER
 
 ENDPOINT = "/api/chat"

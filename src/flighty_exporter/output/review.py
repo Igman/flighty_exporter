@@ -43,13 +43,13 @@ from datetime import timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from .config import Config
-from .consolidate import BOOKED_ONLY, CONFIRMED, NO_PASSENGER_NAMED, DroppedBooking, Flight, SourceRecord, consolidate
-from .extract import PASS_NAME
-from .markup import MARKUP_SOURCE
+from ..config import Config
+from ..flights.consolidate import BOOKED_ONLY, CONFIRMED, NO_PASSENGER_NAMED, DroppedBooking, Flight, SourceRecord, consolidate
+from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, check_flights, normalise_record, reason_kind
+from ..mail.markup import MARKUP_SOURCE
+from ..stages.extract import PASS_NAME
+from ..store import Store
 from .openflights import OpenFlights, ReferenceDataError
-from .store import Store
-from .validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, check_flights, normalise_record, reason_kind
 
 REVIEW_COLUMNS = (
     "keep",

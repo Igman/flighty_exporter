@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .extraction_client import ExtractionRecord, Segment
+from ..ollama.extraction import ExtractionRecord, Segment
 from .passengers import matches_any, names_someone
 
 CONFIRMED = "confirmed"

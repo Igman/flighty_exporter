@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .mailbox_reader import Message
+from ..mail.reader import Message
 from .preflight import OLLAMA_OPENER
 
 ENDPOINT = "/v1/systemone"

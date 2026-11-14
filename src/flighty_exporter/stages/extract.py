@@ -19,11 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from .config import Config
-from .extraction_client import EMAIL_KINDS, ExtractionClient, ExtractionFailed
-from .mailbox_reader import Mailbox, Message
-from .progress import Progress
-from .store import Store
+from ..config import Config
+from ..mail.reader import Mailbox, Message
+from ..ollama.extraction import EMAIL_KINDS, ExtractionClient, ExtractionFailed
+from ..progress import Progress
+from ..store import Store
 
 PASS_NAME = "extract"
 NOT_IN_MAILBOX = "message is no longer in the mailbox (classified from a different mbox?)"

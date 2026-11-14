@@ -60,7 +60,7 @@ from datetime import date
 from html.parser import HTMLParser
 from typing import Any
 
-from .extraction_client import ExtractionError, ExtractionRecord, validate_record
+from ..ollama.extraction import ExtractionError, ExtractionRecord, validate_record
 
 MARKUP_SOURCE = "markup"
 MARKUP_CONFIDENCE = 1.0

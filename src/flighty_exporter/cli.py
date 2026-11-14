@@ -17,14 +17,15 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import audit, export, extract, review
-from .classify import format_summary, run_classify
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
-from .decision_client import DecisionClient, OllamaUnreachable
-from .extraction_client import ExtractionClient
-from .mailbox_reader import MailboxError
-from .openflights import ReferenceDataError
-from .preflight import PREFLIGHT_TIMEOUT, PreflightError, check_address, check_server
+from .mail.reader import MailboxError
+from .ollama.decision import DecisionClient, OllamaUnreachable
+from .ollama.extraction import ExtractionClient
+from .ollama.preflight import PREFLIGHT_TIMEOUT, PreflightError, check_address, check_server
+from .output import export, review
+from .output.openflights import ReferenceDataError
+from .stages import audit, extract
+from .stages.classify import format_summary, run_classify
 from .store import Store
 
 EXIT_OK = 0
