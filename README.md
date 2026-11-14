@@ -196,6 +196,28 @@ instruction if not.
 Progress, with the time per message and an estimate of the time remaining, is
 shown on stderr while the model commands run.
 
+### The application
+
+```
+uv run flighty-exporter
+```
+
+With no command, in a terminal, the tool opens a full-screen application that
+runs classify, extract and review (as `run` does) and shows them live: every
+stage with its state, a progress bar for the running stage with the messages
+done, the time per message and the time remaining, running counts, and the
+end-of-run report when it finishes. It reads the same config file (`--config`
+works as for the commands) and needs `mailbox` set in it; guided setup is not
+available yet. Keys: `p` pauses after the message in progress and continues;
+`q` quits after the message in progress (`q` or Ctrl-C again quits at once),
+and the next launch carries on where it stopped; `r` retries after a
+model-server problem, once you have fixed it. The same rule as the commands
+keeps email on this machine: a non-local Ollama address is refused unless the
+config file allows it.
+
+Outside a terminal (piped, or run from a script), the bare command prints the
+usage line and exits with status 2, as before.
+
 ### All in one go: run
 
 ```
@@ -786,6 +808,7 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
 | `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
+| `app/` | The full-screen application the bare command opens (Textual): `shell` (the application and moving between screens), `runner` (runs the engine on a thread and turns its events into messages) and `screens/` (one module per screen). Draws what the engine reports; no pipeline logic. |
 | `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
 
@@ -801,7 +824,9 @@ The dependency rule, enforced by `tests/test_layout.py`:
 - `stages` and `output` may import from everything below them, but not from
   each other; neither imports `cli`.
 - `engine` may import `stages`, `output` and everything below them; only
-  `cli` imports it.
+  `cli` and `app` import it.
+- `app` may import `engine` and everything below it; only `cli` imports it,
+  and only when the application opens.
 - No module imports a name beginning with an underscore from another module,
   and there are no import cycles. A new module must be given a group in the
   test.

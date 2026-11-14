@@ -1,5 +1,8 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
+With no command, in a terminal, it opens the full-screen application (see
+``app``); outside a terminal it fails with the usage line as before.
+
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
 ``extract``, ``review``, ``audit`` and ``export``; ``run`` performs
 classify, extract and review in one go through the run engine (see
@@ -483,6 +486,14 @@ COMMANDS["run"] = (
 )
 
 
+def _open_app(args: argparse.Namespace, config: Config) -> int:
+    """The bare command in a terminal: the full-screen application. Loaded
+    only here, so the single commands never import it."""
+    from .app import run_app
+
+    return run_app(config, (args.config or Path(DEFAULT_CONFIG_NAME)).resolve())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="flighty-exporter",
@@ -493,7 +504,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=f"config file (default: ./{DEFAULT_CONFIG_NAME} if present, else built-in defaults)",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True, metavar="command")
+    # Not required: the bare command opens the application (see ``main``).
+    subparsers = parser.add_subparsers(dest="command", required=False, metavar="command")
     for name, (help_text, add_arguments, handler) in COMMANDS.items():
         sub = subparsers.add_parser(name, help=help_text, description=help_text)
         add_arguments(sub)
@@ -504,8 +516,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command is None and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # Outside a terminal the bare command fails as when a command was required.
+        parser.error("the following arguments are required: command")
     try:
         config = load_config(args.config)
+        if args.command is None:
+            return _open_app(args, config)
         return args.handler(args, config)
     except UsageError as exc:
         print(f"error: {exc}", file=sys.stderr)
