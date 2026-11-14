@@ -306,3 +306,78 @@ def test_export_from_the_store_discards_and_counts_decisions_too(workspace):
 
     assert result.count(DISCARDED) == 1
     assert export(workspace, "--from-store").count(DISCARDED) == 0
+
+
+# -- manual-add ticks --------------------------------------------------------------------------
+
+
+def done(path: Path) -> dict[tuple[str, str, str, str], str]:
+    return {(m["date"], m["flight_number"], m["origin"], m["destination"]): m["done"] for m in read_csv(path)}
+
+
+def test_mark_added_ticks_a_flight_on_the_manual_add_list(workspace):
+    run_passes(workspace, [GOOD, NO_NUMBER, OLD])
+    review(workspace)
+    export(workspace)
+    manual = workspace.root / "manual-add.csv"
+    assert header(manual)[-1] == "done"
+    assert set(done(manual).values()) == {""}
+
+    by_route = workspace.run("mark-added", "2025-08-01", "--route", "osl", "lis")
+    by_number = workspace.run("mark-added", "2004-08-01", "ZZ 9")
+
+    assert by_route.returncode == 0, by_route.stderr
+    assert by_number.returncode == 0, by_number.stderr
+    assert "2025-08-01 OSL-LIS" in by_route.stdout
+    export(workspace)
+    assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "yes", ("2025-08-01", "", "OSL", "LIS"): "yes"}
+    # The same ticks show when exporting from the store.
+    export(workspace, "--from-store")
+    assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "yes", ("2025-08-01", "", "OSL", "LIS"): "yes"}
+
+    undone = workspace.run("mark-added", "2004-08-01", "ZZ9", "--undo")
+
+    assert undone.returncode == 0, undone.stderr
+    export(workspace)
+    assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "", ("2025-08-01", "", "OSL", "LIS"): "yes"}
+
+
+def test_mark_added_finds_a_corrected_flight_by_the_values_it_now_shows(workspace):
+    run_passes(workspace, [GOOD, OLD])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2004-08-01 ZZ9"].update(flight_number="ZZ8"))
+    export(workspace)
+
+    assert workspace.run("mark-added", "2004-08-01", "ZZ8").returncode == 0
+
+    (workspace.root / REVIEW).unlink()
+    export(workspace)
+    assert done(workspace.root / "manual-add.csv") == {("2004-08-01", "ZZ8", "OSL", "LIS"): "yes"}
+
+
+def test_mark_added_needs_a_flight_number_or_a_route_and_a_store(workspace):
+    neither = workspace.run("mark-added", "2004-08-01")
+    assert neither.returncode == 2 and "--route" in neither.stderr
+
+    no_store = workspace.run("mark-added", "2004-08-01", "ZZ9")
+    assert no_store.returncode == 1 and "store not found" in no_store.stderr
+
+    bad_date = workspace.run("mark-added", "01/08/2004", "ZZ9")
+    assert bad_date.returncode == 2 and "YYYY-MM-DD" in bad_date.stderr
+
+
+# -- stores from before decisions -----------------------------------------------------------------
+
+
+def test_a_store_from_before_decisions_still_works(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    with sqlite3.connect(workspace.root / "flighty_exporter.db") as db:
+        db.execute("DROP TABLE review_decisions")
+        db.execute("PRAGMA user_version=4")
+
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no"))
+
+    assert export(workspace).count(RECORDED) == 1
+    (workspace.root / REVIEW).unlink()
+    assert export(workspace).count("flights exported") == 1

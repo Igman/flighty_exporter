@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .flights.decisions import is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
@@ -338,6 +339,43 @@ COMMANDS["export"] = (
     "turn the kept rows of the edited review table into an import file for Flighty and a manual-add list",
     _export_arguments,
     cmd_export,
+)
+
+
+def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
+    if not is_date(args.date):
+        raise UsageError(f"date {args.date!r} is not a real YYYY-MM-DD date")
+    if bool(args.flight_number) == bool(args.route):
+        raise UsageError("give the flight number, or --route ORIGIN DEST for a flight without one (not both)")
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    origin, destination = args.route or ("", "")
+    with Store(store_path) as store:
+        key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
+        store.set_added(key, not args.undo)
+    if args.undo:
+        print(f"Flight {key} is no longer marked as added in Flighty.")
+    else:
+        print(f"Flight {key} is marked as added in Flighty; export shows it as done on the manual-add list.")
+    return EXIT_OK
+
+
+def _mark_added_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("date", help="the flight's date, YYYY-MM-DD, as on the manual-add list")
+    parser.add_argument("flight_number", nargs="?", help="the flight number, as on the manual-add list")
+    parser.add_argument(
+        "--route", nargs=2, metavar=("ORIGIN", "DEST"), help="origin and destination, for a flight without a number"
+    )
+    parser.add_argument("--undo", action="store_true", help="remove the tick instead of setting it")
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+
+
+COMMANDS["mark-added"] = (
+    "tick a flight on the manual-add list as entered in Flighty by hand (or untick it with --undo)",
+    _mark_added_arguments,
+    cmd_mark_added,
 )
 
 
