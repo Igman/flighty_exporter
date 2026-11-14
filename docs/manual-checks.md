@@ -221,7 +221,9 @@ same flights in the same order.
 3. **Detail panel.** Moving with the arrows, the panel follows: every field,
    "keep: … (pre-set)" or "(your choice; pre-set …)", each reason with
    "(blocking)" or "(advisory)", "source emails: N" with dates and
-   subjects; BA286 shows two or more source emails.
+   subjects; BA286 shows two or more source emails. When the detail is
+   longer than its panel, Tab moves the focus to the panel and the arrows
+   scroll it; Tab again returns to the table.
 4. **Toggle keep.** Space on a flight: its keep cell and the totals change
    at once, the cursor stays, the detail says "your choice". `k` toggles
    back. `fe flights` in another terminal shows each change.
@@ -345,3 +347,4 @@ in a pseudo-terminal and the screen read back; steps that need a person
 
 | Date | Who | Tool version (commit) | Ollama, models | How | Sections walked | Result | Defects found |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-14 | agent (Claude), for the owner | `b52ba94` (start-fresh notice re-checked on `0452572`) | Ollama 0.40.16, `nimble`, `gemma4:12b-it-q4_K_M` | Automated: keys sent in a 100x40 pseudo-terminal, screen read with pyte | 1; 2.1, 2.3 (missing file), 2.5, 2.7, 2.9; 3.1-3.4, 3.10; 4.2-4.10 (4.5 with `ua-328` and `XQY`, then back); 5.1-5.3, 5.5, 5.6; 6.1, 6.3, 6.6, 6.7 (Quick session, then a Thorough one made with `run --thoroughness thorough`). Not walked: 2.4, 2.8, 2.10-2.15, 3.5-3.9, 3.11, 4.1, 4.11, 4.12, 5.4 (Finder), 5.7, 5.8, 6.2, 6.4, 6.5 | Pass: 7 flights, as in the truth file; export wrote 7 rows; start fresh deleted the recorded files and the store and kept `test.mbox`, the config, a file of the walker's own, the models and the reference-data cache | The review footer at 100 columns ends at `x Unreadable`, so `e Export` and `q Quit` are not visible; the reasons column is cut at 100 columns; the setup mailbox error and the report's file paths broke mid-name (the latter fixed in the same pass) |
