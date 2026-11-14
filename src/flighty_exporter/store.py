@@ -117,6 +117,11 @@ CREATE TABLE IF NOT EXISTS message_texts (
     text TEXT NOT NULL,
     saved_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS session_values (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -467,6 +472,27 @@ class Store:
     def commit(self) -> None:
         if not self._held:
             self._db.commit()
+
+    # -- session values ---------------------------------------------------------
+    # Small named values that belong to the session as a whole (for example
+    # the effective threshold, or what the session was started with), each
+    # stored as text. A store from before this table existed gets it empty.
+
+    def session_value(self, key: str) -> str | None:
+        """The session value stored under ``key``, or None."""
+        row = self._db.execute("SELECT value FROM session_values WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_session_value(self, key: str, value: str | None) -> None:
+        """Store (or with None, remove) the session value under ``key``."""
+        with self._write():
+            if value is None:
+                self._db.execute("DELETE FROM session_values WHERE key = ?", (key,))
+            else:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO session_values (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key, value, _now()),
+                )
 
     # -- held writes ------------------------------------------------------------
 
