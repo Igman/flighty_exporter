@@ -36,7 +36,9 @@ the audit fills them in with one scan of the mailbox (no PDF is read) before
 sampling. Rerunning classify does not.
 
 The config is never changed: the report ends with a one-line reading (the
-lowest band with a hit, and the threshold that would include it).
+lowest band with a hit, and the threshold that would include it). The
+threshold here is the session's effective one (``threshold``), which a
+Thorough run may have lowered below ``[classify] threshold``.
 """
 
 from __future__ import annotations

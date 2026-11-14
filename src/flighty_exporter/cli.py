@@ -429,7 +429,6 @@ class _RunPrinter:
         for warning in review.format_warnings(event.summary):
             _warn(warning)
 
-
     def _audit_summary(self, event: StageFinished) -> None:
         result = event.summary
         if event.state == STOPPED:

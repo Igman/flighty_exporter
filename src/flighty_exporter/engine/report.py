@@ -4,7 +4,9 @@ the ``run`` command prints for it.
 Everything comes from the stage summaries the run produced (nothing is
 recomputed): the flight counts from review's summary, the failed messages
 from each pass's summary. Failed messages are retried on every run, so this
-run's counts are the messages still failing.
+run's counts are the messages still failing. A Thorough run adds what its
+check for missed flight emails found and changed (see ``thorough``); a Quick
+run says the check was skipped.
 """
 
 from __future__ import annotations
@@ -85,9 +87,7 @@ def format_report(report: RunReport) -> str:
         f"  PDF attachments not read:   {review.unread_attachments}",
     ]
     lines += check_lines(report.audit, report.include)
-    lines += [
-        "Files written:",
-    ]
+    lines.append("Files written:")
     lines += [f"  {what}: {where}" for what, where in report.files_written]
     if report.review_table_left:
         lines.append(f"Note: {REVIEW_TABLE_LEFT} ({review.review_path}).")
