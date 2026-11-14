@@ -30,10 +30,15 @@ class RunReport:
     # The review table existed and had been edited, so it was not rewritten;
     # ``review`` still holds the flights as the store has them.
     review_table_left: bool = False
+    # (what, where) for every file this run wrote, as recorded in the session
+    # (see ``session.record_written``); None: worked out from ``review``.
+    files: tuple[tuple[str, Path], ...] | None = None
 
     @property
     def files_written(self) -> list[tuple[str, Path]]:
         """(what, where) for every file this run wrote."""
+        if self.files is not None:
+            return list(self.files)
         written = [] if self.review_table_left else [("review table", self.review.review_path)]
         return written + [("failures file", self.review.failures_path)]
 

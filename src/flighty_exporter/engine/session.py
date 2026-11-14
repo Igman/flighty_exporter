@@ -1,0 +1,359 @@
+"""Sessions: one store plus the files the tool generated from it.
+
+A session exists when its store file exists. The store records, as session
+values (see ``Store.session_value``):
+
+- what the session was started with: the resolved mailbox path, the
+  passenger name variants, thoroughness, the two model names and the
+  threshold, recorded by the first command that brings a mailbox to the
+  store (``begin``) and never overwritten;
+- when the store was created by this version (``started_at``): only then is
+  every file the session wrote known;
+- when the session was last active (``touch``), updated by every command
+  that writes results.
+
+It also records every file the tool writes for the session
+(``record_written``: review table, failures file, audit report, import
+files, manual-add list), by resolved absolute path.
+
+``describe`` reads a session for a startup prompt or a start-fresh
+confirmation; ``start_fresh`` deletes the recorded files that still exist,
+and only those, then the store and its side files. Neither prints or asks
+anything. A store from before sessions were recorded has no started-with
+values and no record of its files: it is described from what it holds, with
+"unknown" for the rest, and starting fresh deletes just the store.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from pathlib import Path
+
+from ..config import Config
+from ..output.review import build_flight_list
+from ..store import Store
+
+# Session values.
+STARTED_MAILBOX = "started_with_mailbox"
+STARTED_NAMES = "started_with_names"  # JSON list
+STARTED_THOROUGHNESS = "started_with_thoroughness"
+STARTED_DECISION_MODEL = "started_with_decision_model"
+STARTED_EXTRACTION_MODEL = "started_with_extraction_model"
+STARTED_THRESHOLD = "started_with_threshold"  # JSON number
+STARTED_AT = "started_at"  # set only when this version created the store
+LAST_ACTIVE = "last_active"
+EFFECTIVE_THRESHOLD = "effective_threshold"  # the threshold Thorough lowered to, if any
+
+# What each written file is.
+REVIEW_TABLE = "review table"
+FAILURES_FILE = "failures file"
+AUDIT_REPORT = "audit report"
+IMPORT_FILE = "import file"
+MANUAL_ADD_LIST = "manual-add list"
+
+STORE_SIDE_SUFFIXES = ("-wal", "-shm", "-journal")
+
+FILES_NOT_RECORDED = (
+    "this session's store was created before the tool recorded the files it writes, "
+    "so files it generated earlier are not known and were not deleted"
+)
+
+
+@dataclass(frozen=True)
+class WrittenFile:
+    kind: str  # REVIEW_TABLE, FAILURES_FILE, AUDIT_REPORT, IMPORT_FILE or MANUAL_ADD_LIST
+    path: Path  # resolved, absolute
+    written_at: str  # ISO 8601, UTC
+
+
+@dataclass(frozen=True)
+class SessionDescription:
+    store_path: Path
+    # What the session was started with; None where not recorded (an older store).
+    mailbox: Path | None
+    mailbox_exists: bool | None  # None when the mailbox is not known
+    passenger_names: tuple[str, ...] | None
+    thoroughness: str | None
+    decision_model: str | None
+    extraction_model: str | None
+    threshold: float | None
+    started_at: str | None  # ISO 8601 UTC; None for a store created before sessions were recorded
+    last_active: str | None  # ISO 8601 UTC; None if never recorded
+    # Progress, derived from the store with the configured models and the
+    # threshold in use (the configured one, or the session's effective one if lower).
+    threshold_used: float
+    messages: int  # messages recorded
+    classified: int  # by the configured decision model
+    resolved_from_markup: int  # read from the message's own machine-readable data
+    candidates: int  # classified at or above the threshold in use
+    extracted: int  # candidates with a record from the configured extraction model
+    flights: int  # in the current flight list
+    flights_with_decision: int  # of those, with a saved review decision
+    complete: bool  # something classified or resolved, and no candidate left without an extraction
+    files: tuple[WrittenFile, ...]  # recorded as written and still present
+    files_known: bool  # False for an older store: files written before recording began are unknown
+    would_lose: tuple[str, ...]  # plain-language lines: what starting fresh would lose
+
+    @property
+    def still_to_extract(self) -> int:
+        return self.candidates - self.extracted
+
+
+@dataclass
+class FreshResult:
+    store_path: Path
+    store_existed: bool
+    preview: bool = False  # nothing was deleted: this is what would be
+    deleted: list[WrittenFile] = field(default_factory=list)  # recorded files deleted
+    already_gone: list[WrittenFile] = field(default_factory=list)  # recorded, but no longer there
+    refused: list[WrittenFile] = field(default_factory=list)  # recorded path is not a regular file: left alone
+    store_files: list[Path] = field(default_factory=list)  # the store and side files deleted
+    files_known: bool = True  # False: an older store, whose earlier files were not recorded
+
+
+# -- recording -------------------------------------------------------------------------
+
+
+def begin(store: Store, config: Config, mailbox_path: Path, thoroughness: str) -> None:
+    """Called by every command that brings a mailbox to the store (classify,
+    extract, audit, run): records what the session was started with where
+    nothing is recorded yet, and the last activity."""
+    started = {
+        STARTED_MAILBOX: str(mailbox_path.resolve()),
+        STARTED_NAMES: json.dumps(list(config.passenger_names)),
+        STARTED_THOROUGHNESS: thoroughness,
+        STARTED_DECISION_MODEL: config.decision_model,
+        STARTED_EXTRACTION_MODEL: config.extraction_model,
+        STARTED_THRESHOLD: json.dumps(config.threshold),
+    }
+    if store.is_new:
+        started[STARTED_AT] = _now()
+    for key, value in started.items():
+        if store.session_value(key) is None:
+            store.set_session_value(key, value)
+    touch(store)
+
+
+def touch(store: Store) -> None:
+    """Record that a command wrote results to the session now."""
+    store.set_session_value(LAST_ACTIVE, _now())
+
+
+def record_written(store: Store, kind: str, path: Path) -> None:
+    """Record that the tool wrote ``path`` (a ``kind`` of file) for the session."""
+    store.record_written_file(path, kind)
+
+
+# -- describing ------------------------------------------------------------------------
+
+
+def describe(config: Config, store_path: Path) -> SessionDescription | None:
+    """The session in ``store_path``, None if there is none. Reads only
+    (opening an older store upgrades its tables, as every command does), and
+    never downloads the reference data."""
+    if not store_path.is_file():
+        return None
+    with Store(store_path) as store:
+        value = store.session_value
+        mailbox = Path(value(STARTED_MAILBOX)) if value(STARTED_MAILBOX) else None
+        names = value(STARTED_NAMES)
+        threshold = value(STARTED_THRESHOLD)
+        threshold_used = _threshold_in_use(config, value(EFFECTIVE_THRESHOLD))
+        candidates = store.extraction_candidates(config.decision_model, threshold_used)
+        extracted = len(set(candidates) & store.extracted_ids(config.extraction_model))
+        classified = len(store.classified_ids(config.decision_model))
+        markup = len(store.markup_ids())
+        # An empty download address: the cached reference data is used if
+        # present, and nothing is fetched (the code checks do not change the
+        # flight list).
+        flight_list = build_flight_list(replace(config, threshold=threshold_used, export_data_url=""), store)
+        files = tuple(WrittenFile(kind, path, at) for kind, path, at in store.written_files() if path.exists())
+        counts = store.row_counts()
+        files_known = value(STARTED_AT) is not None
+        return SessionDescription(
+            store_path=store_path,
+            mailbox=mailbox,
+            mailbox_exists=None if mailbox is None else mailbox.is_file(),
+            passenger_names=None if names is None else tuple(json.loads(names)),
+            thoroughness=value(STARTED_THOROUGHNESS),
+            decision_model=value(STARTED_DECISION_MODEL),
+            extraction_model=value(STARTED_EXTRACTION_MODEL),
+            threshold=None if threshold is None else float(json.loads(threshold)),
+            started_at=value(STARTED_AT),
+            last_active=value(LAST_ACTIVE),
+            threshold_used=threshold_used,
+            messages=counts["messages"],
+            classified=classified,
+            resolved_from_markup=markup,
+            candidates=len(candidates),
+            extracted=extracted,
+            flights=len(flight_list.flights),
+            flights_with_decision=sum(1 for reviewed in flight_list.flights if reviewed.decision is not None),
+            complete=(classified + markup) > 0 and extracted == len(candidates),
+            files=files,
+            files_known=files_known,
+            would_lose=_would_lose(counts, len(files)),
+        )
+
+
+def _threshold_in_use(config: Config, effective: str | None) -> float:
+    if effective is None:
+        return config.threshold
+    try:
+        return min(config.threshold, float(effective))
+    except ValueError:
+        return config.threshold
+
+
+def _would_lose(counts: dict[str, int], files: int) -> tuple[str, ...]:
+    lines = []
+    if counts["classifications"]:
+        lines.append(f"classification of {_emails(counts['classifications'])}")
+    if counts["markup"]:
+        lines.append(f"flight data read from machine-readable data in {_emails(counts['markup'])}")
+    if counts["model_extractions"]:
+        lines.append(f"extraction of {_emails(counts['model_extractions'])}")
+    if counts["review_decisions"]:
+        lines.append(_plural(counts["review_decisions"], "review decision"))
+    if files:
+        lines.append(_plural(files, "generated file"))
+    return tuple(lines)
+
+
+# -- starting fresh --------------------------------------------------------------------
+
+
+def start_fresh(store_path: Path, *, preview: bool = False) -> FreshResult:
+    """Delete the session in ``store_path``: every file recorded as written
+    for it that still exists (and only those; a recorded path that is not a
+    regular file, or that is the session's mailbox, is left alone), then the
+    store and its side files. With ``preview``, delete nothing and report
+    what would be deleted. With no store, does nothing."""
+    result = FreshResult(store_path, store_existed=store_path.is_file(), preview=preview)
+    if not result.store_existed:
+        return result
+    with Store(store_path) as store:
+        recorded = [WrittenFile(kind, path, at) for kind, path, at in store.written_files()]
+        result.files_known = store.session_value(STARTED_AT) is not None
+        mailbox = store.session_value(STARTED_MAILBOX)
+    protected = {Path(mailbox)} if mailbox else set()
+    for written in recorded:
+        try:
+            mode = os.lstat(written.path).st_mode
+        except FileNotFoundError:
+            result.already_gone.append(written)
+            continue
+        if not stat.S_ISREG(mode) or written.path in protected or written.path == store_path.resolve():
+            result.refused.append(written)
+            continue
+        if not preview:
+            written.path.unlink()
+        result.deleted.append(written)
+    for path in [store_path] + [Path(f"{store_path}{suffix}") for suffix in STORE_SIDE_SUFFIXES]:
+        if path.is_file():
+            if not preview:
+                path.unlink()
+            result.store_files.append(path)
+    return result
+
+
+# -- text ------------------------------------------------------------------------------
+
+
+def format_description(description: SessionDescription) -> str:
+    d = description
+
+    def known(item: object) -> str:
+        return "unknown" if item is None else str(item)
+
+    if d.mailbox is None:
+        mailbox = "unknown"
+    else:
+        mailbox = str(d.mailbox) if d.mailbox_exists else f"{d.mailbox} (no longer exists)"
+    if d.passenger_names is None:
+        names = "unknown"
+    else:
+        names = ", ".join(d.passenger_names) or "none (no passenger filtering)"
+    if d.complete:
+        state = "complete"
+    elif d.classified + d.resolved_from_markup == 0:
+        state = "unfinished: nothing classified yet"
+    else:
+        state = f"unfinished: {_emails(d.still_to_extract)} still to extract"
+    lines = [
+        f"Session in {d.store_path}",
+        f"  mailbox:                    {mailbox}",
+        "  started with:",
+        f"    passenger names:          {names}",
+        f"    thoroughness:             {known(d.thoroughness)}",
+        f"    decision model:           {known(d.decision_model)}",
+        f"    extraction model:         {known(d.extraction_model)}",
+        f"    threshold:                {known(d.threshold)}",
+        f"  started:                    {_time(d.started_at)}",
+        f"  last active:                {_time(d.last_active)}",
+        "Progress:",
+        f"  messages recorded:          {d.messages}",
+        f"  classified:                 {d.classified}",
+        f"  resolved from machine-readable data: {d.resolved_from_markup}",
+        f"  at or above the threshold:  {d.candidates}",
+        f"  extracted:                  {d.extracted} of {d.candidates}",
+        f"  flights:                    {d.flights}",
+        f"  flights with a saved decision: {d.flights_with_decision}",
+        f"  state:                      {state}",
+    ]
+    if d.threshold_used != d.threshold:
+        lines.append(f"  threshold in use:           {d.threshold_used}")
+    lines.append("Files written:")
+    lines += [f"  {f.kind}: {f.path}" for f in d.files] or ["  none"]
+    if not d.files_known:
+        lines.append("  (files written before this store recorded them are not known)")
+    lines.append("Starting fresh would lose:")
+    lines += [f"  {line}" for line in d.would_lose] or ["  nothing (the store holds no results yet)"]
+    return "\n".join(lines)
+
+
+KEPT_WHEN_FRESH = (
+    "Starting fresh never deletes the mailbox, the config file, downloaded models or the cached "
+    "reference data, nor any file the tool did not record writing."
+)
+
+
+def format_fresh(result: FreshResult) -> list[str]:
+    """One line per file deleted (or, for a preview, that would be), the
+    store, and anything left alone."""
+    deleted = "Would delete" if result.preview else "Deleted"
+    lines = [f"{deleted} {f.kind}: {f.path}" for f in result.deleted]
+    lines += [f"Already gone: {f.kind} {f.path}" for f in result.already_gone]
+    lines += [f"Left alone ({f.kind} is not a regular file the tool wrote): {f.path}" for f in result.refused]
+    if result.store_files:
+        sides = [p.name for p in result.store_files[1:]]
+        side_text = f" (with {', '.join(sides)})" if sides else ""
+        lines.append(f"{deleted} the store: {result.store_files[0]}{side_text}")
+    if not result.files_known:
+        lines.append(f"Note: {FILES_NOT_RECORDED}.")
+    return lines
+
+
+def _time(value: str | None) -> str:
+    if value is None:
+        return "unknown"
+    try:
+        return datetime.fromisoformat(value).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except ValueError:
+        return value
+
+
+def _emails(count: int) -> str:
+    return _plural(count, "email")
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count:,} {noun}{'' if count == 1 else 's'}"
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
