@@ -36,13 +36,16 @@ the audit fills them in with one scan of the mailbox (no PDF is read) before
 sampling. Rerunning classify does not.
 
 The config is never changed: the report ends with a one-line reading (the
-lowest band with a hit, and the threshold that would include it).
+lowest band with a hit, and the threshold that would include it). The
+threshold here is the session's effective one (``threshold``), which a
+Thorough run may have lowered below ``[classify] threshold``.
 """
 
 from __future__ import annotations
 
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -54,6 +57,7 @@ from ..ollama.extraction import ExtractionClient
 from ..progress import Progress
 from ..store import Store
 from ..tables import format_message_date, write_csv
+from ..threshold import effective_threshold
 from .extract import ExtractSummary, extract_messages
 from .summary import failure_lines
 
@@ -165,12 +169,18 @@ def run_audit(
     sample_size: int,
     seed: int,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
+    on_start: Callable[[int], None] | None = None,
 ) -> AuditResult:
-    """Run the audit. KeyboardInterrupt and OllamaUnreachable propagate after
-    the result so far is attached to the exception as ``summary``."""
+    """Run the audit. ``on_progress`` follows the sampled messages' extraction
+    as it does extract's (see ``extract_messages``); ``on_start``, if given,
+    is called once the sample is drawn with the number of messages to send
+    (0 when there is nothing to audit). KeyboardInterrupt, OllamaUnreachable
+    and whatever ``on_progress`` raises propagate after the result so far is
+    attached to the exception as ``summary``."""
     result = AuditResult(sample_size, seed)
     try:
-        _run(config, mailbox_path, store, client, result, progress_stream)
+        _run(config, mailbox_path, store, client, result, progress_stream, on_progress, on_start or (lambda n: None))
     except BaseException as exc:
         result.interrupted = isinstance(exc, KeyboardInterrupt)
         exc.summary = result  # type: ignore[attr-defined]
@@ -185,12 +195,15 @@ def _run(
     client: ExtractionClient,
     result: AuditResult,
     progress_stream: TextIO | None,
+    on_progress: Callable[[Progress], None] | None,
+    on_start: Callable[[int], None],
 ) -> None:
     result.classify_failed = store.classify_failure_count(config.decision_model)
     result.markup = len(store.markup_ids())
     population = store.audit_population(config.decision_model)
     result.classified = len(population)
     if not population:
+        on_start(0)
         return
     unknown = {message_id for message_id, _, has_pdf in population if has_pdf is None}
     if unknown:
@@ -221,7 +234,10 @@ def _run(
     pending = {message_id for message_id in sampled if message_id not in extracted}
     result.sampled, result.reused, result.to_extract = len(sampled), len(sampled) - len(pending), len(pending)
 
-    extract_messages(mailbox_path, pending, store, client, result.extraction, "audit", progress_stream)
+    on_start(len(pending))
+    extract_messages(
+        mailbox_path, pending, store, client, result.extraction, "audit", progress_stream, on_progress
+    )
 
     records = store.extraction_records(config.extraction_model)
     result.sections = {
@@ -233,7 +249,8 @@ def _run(
         key=lambda hit: (hit.gate, hit.message_id),
     )
     result.lowest_hit = hits[0] if hits else None
-    result.hits_below = [hit for hit in hits if hit.gate < config.threshold]
+    threshold = effective_threshold(config, store)
+    result.hits_below = [hit for hit in hits if hit.gate < threshold]
 
 
 def _sample(identifiers: list[str], free: set[str], size: int, salt: str) -> list[str]:
@@ -286,12 +303,21 @@ def _record_pdf_attachments(
 # -- report ------------------------------------------------------------------------
 
 
-def format_report(result: AuditResult, config: Config, store: Store, output: Path) -> str:
+def format_report(
+    result: AuditResult, config: Config, store: Store, output: Path, *, advice: bool = True
+) -> str:
+    """The audit's printed report. ``advice`` adds the closing line on what
+    to do next by hand (lower the threshold, then run extract); a Thorough
+    ``run``, whose include stage follows at once, leaves it out."""
     ex = result.extraction
     sent = ex.extracted + ex.failed
+    threshold = effective_threshold(config, store)
+    shown = f"threshold {threshold:g}"
+    if threshold < config.threshold:
+        shown += f" for this session; configured {config.threshold:g}"
     lines = [
         "Audit finished.",
-        f"  decision model:       {config.decision_model} (threshold {config.threshold:g})",
+        f"  decision model:       {config.decision_model} ({shown})",
         f"  extraction model:     {config.extraction_model}",
         f"  sample size per band: {result.sample_size} (seed {result.seed})",
         f"  messages classified (in bands): {result.classified}",
@@ -312,14 +338,14 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
         lines.append(f"  PDF attachments noted from the mailbox for {result.pdf_backfilled} earlier-classified messages")
 
     lines += ["", f"All classified messages ({result.classified})"]
-    lines += _table(result.sections[SECTION_ALL], config.threshold)
+    lines += _table(result.sections[SECTION_ALL], threshold)
     lines += ["", f"Messages with a PDF attachment ({result.with_pdf} of {result.classified})"]
     if result.pdf_unknown:
         lines.append(
             f"  not known for {result.pdf_unknown} messages: classified before PDF attachments were recorded "
             "and not found in this mailbox, so they are left out of this section"
         )
-    lines += _table(result.sections[SECTION_PDF], config.threshold)
+    lines += _table(result.sections[SECTION_PDF], threshold)
 
     lines += ["", f"Sampled messages below the threshold that contained flight segments: {len(result.hits_below)}"]
     for hit in result.hits_below:
@@ -332,14 +358,17 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
                 f"{segment.origin}-{segment.destination}"
             )
 
-    lines += ["", _reading(result, config.threshold)]
-    lines.append(
-        "The config was not changed. After lowering [classify] threshold, run extract: messages the audit "
-        "already extracted are not sent again."
-    )
+    lines += ["", _reading(result, threshold)]
+    if advice:
+        lines.append(AUDIT_ADVICE)
     lines.append(f"Audit table written to {output}")
     return "\n".join(lines)
 
+
+AUDIT_ADVICE = (
+    "The config was not changed. After lowering [classify] threshold, run extract: messages the audit "
+    "already extracted are not sent again."
+)
 
 _HEADER = ("band", "messages", "sampled", "failed", "with segments", "hit rate", "est. flight emails")
 _WIDTHS = (16, 10, 9, 8, 15, 10, 20)

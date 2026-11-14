@@ -1,7 +1,7 @@
 """Review table: write the review CSV and the failures file from the store.
 
 The extraction records of every message selected for extraction (gate at or
-above the threshold) that has a record from the configured extraction model,
+above the session's effective threshold, see ``threshold``) that has a record from the configured extraction model,
 and of every message resolved from its own machine-readable data (markup
 records have no gate and are always included), are normalised and checked (see ``validate``) and consolidated (see
 ``consolidate``) into one row per flight, keeping only bookings for the
@@ -59,6 +59,7 @@ from ..flights.records import MARKUP_SOURCE
 from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, normalise_record, reason_kind
 from ..store import EXTRACT_PASS, Store
 from ..tables import format_message_date, write_csv
+from ..threshold import effective_threshold
 from .openflights import OpenFlights, ReferenceDataError
 
 REVIEW_COLUMNS = (
@@ -218,7 +219,7 @@ def build_flight_list(config: Config, store: Store) -> FlightList:
     decisions' corrections, then the checks, then their keep overrides (see
     ``flights.decisions``). Reads only; ``discard_stale_decisions`` removes
     the decisions it found no flight for."""
-    selected = store.extraction_candidates(config.decision_model, config.threshold)
+    selected = store.extraction_candidates(config.decision_model, effective_threshold(config, store))
     records = store.extraction_records(config.extraction_model)
     markup_records = store.extraction_records(MARKUP_SOURCE)
     selected += sorted(markup_records)

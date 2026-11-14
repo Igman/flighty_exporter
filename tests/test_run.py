@@ -100,23 +100,6 @@ def test_run_writes_the_same_files_as_the_three_commands_run_separately(workspac
 # -- thoroughness -------------------------------------------------------------------
 
 
-def test_thorough_stops_before_any_work_with_a_not_available_message(workspace):
-    mbox = mailbox(workspace)
-
-    for config, args in (
-        ('\n[run]\nthoroughness = "thorough"\n', ()),
-        ("", ("--thoroughness", "thorough")),
-    ):
-        workspace.write_config(f'[ollama]\naddress = "{workspace.ollama.url}"\n{config}')
-        result = workspace.run("run", "--mailbox", str(mbox), *args)
-
-        assert result.returncode == 1
-        assert result.stderr.strip() == "error: thorough mode is not available yet"
-        assert result.stdout == ""
-        assert workspace.ollama.requests == []
-        assert not (workspace.root / "flighty_exporter.db").exists()
-
-
 def test_quick_on_the_command_line_overrides_thorough_in_the_config(workspace):
     mbox = mailbox(workspace)
     workspace.write_config(f'[ollama]\naddress = "{workspace.ollama.url}"\n\n[run]\nthoroughness = "thorough"\n')
@@ -366,6 +349,7 @@ def test_report_states_what_was_found_what_failed_where_the_files_are_and_what_t
         "    classify:                 1",
         "    extract:                  1",
         "  PDF attachments not read:   1",
+        "  check for missed flight emails: skipped (quick)",
         "Files written:",
         "  review table: out/review.csv",
         "  failures file: out/failures.csv",

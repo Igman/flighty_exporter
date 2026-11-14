@@ -37,6 +37,7 @@ config next to the mailbox works wherever the tool is run from.
     sample_size = 25
     seed = 1
     output = "audit.csv"
+    auto_include_budget = 2000
 
     [export]
     output_dir = "."
@@ -121,6 +122,9 @@ class Config:
     audit_output: Path = Path("audit.csv")
     # How thorough `run` is (QUICK or THOROUGH); `run --thoroughness` overrides it.
     thoroughness: str = QUICK
+    # Thorough runs: the most not-yet-extracted messages a lowered threshold
+    # may add for the run to lower the session's threshold on its own.
+    audit_auto_include_budget: int = 2000
 
 
 # The schema: section -> key -> (Config field, expected type(s)).
@@ -157,6 +161,7 @@ _SCHEMA: dict[str | None, dict[str, tuple[str, tuple[type, ...]]]] = {
         "sample_size": ("audit_sample_size", (int,)),
         "seed": ("audit_seed", (int,)),
         "output": ("audit_output", (str,)),
+        "auto_include_budget": ("audit_auto_include_budget", (int,)),
     },
     "export": {
         "output_dir": ("export_output_dir", (str,)),
@@ -226,6 +231,7 @@ def _resolve(data: dict[str, Any], base: Path) -> Config:
         ("classify_max_body_chars", "[classify] max_body_chars", 1),
         ("extract_max_input_chars", "[extract] max_input_chars", 1),
         ("audit_sample_size", "[audit] sample_size", 1),
+        ("audit_auto_include_budget", "[audit] auto_include_budget", 0),
     ):
         if field in values and values[field] < minimum:
             raise ConfigError(f"{name} must be at least {minimum}")

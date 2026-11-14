@@ -12,11 +12,22 @@ Extract's progress can come in two runs: when message positions are missing
 or stale, it first scans the mailbox's headers to locate its messages
 (``StageProgress.total`` is then the number of mailbox entries), then
 reports one step per selected message. The scan's ``StageProgress`` carries
-``phase`` = ``"locating messages"``.
+``phase`` = ``"locating messages"``; so do audit's and include's, which
+extract through the same code.
 
 Stage summaries are the stages' own summary objects (``ClassifySummary``,
 ``ExtractSummary``, ``ReviewSummary``). Those in ``StageCounts`` are shallow
 copies taken at that moment.
+
+A Thorough run has two more stages between extract and review (the order is
+``THOROUGH_STAGES`` in ``pipeline``): ``AUDIT``, whose summary is the
+audit's ``AuditResult`` (its ``StageStarted.total`` is the number of sampled
+messages to send, known once the sample is drawn; its ``StageCounts`` carry
+the audit's ``extraction`` summary as it fills), and ``INCLUDE``, whose
+summary is an ``engine.thorough.IncludeSummary`` (its ``StageCounts`` carry
+that summary's ``extraction``). When the audit found nothing below the
+threshold, or including it would exceed the budget, the include stage starts
+with a total of 0 and finishes ``SKIPPED`` with a note saying why.
 """
 
 from __future__ import annotations
@@ -37,11 +48,16 @@ REVIEW = "review"
 DONE = "done"
 NOTHING_TO_DO = "nothing to do"  # every message already had its result: no work was needed
 STOPPED = "stopped"  # ended early: a problem, a requested stop, or an interruption
+SKIPPED = "skipped"  # not needed in this run; the stage's note says why
 
 # Kinds of model-server problem.
 ADDRESS = "address"  # the Ollama address is not on this machine
 PREFLIGHT = "preflight"  # unreachable, too old or model missing when the stage was about to start
 UNREACHABLE = "unreachable"  # the server went away mid-stage; results so far are kept
+
+# The two stages a Thorough run adds between extract and review.
+AUDIT = "audit"
+INCLUDE = "include"
 
 
 @dataclass(frozen=True)
@@ -65,7 +81,7 @@ class StageProgress:
     total: int
     seconds_per_message: float | None  # measured over messages that needed the model; None until one has
     seconds_remaining: float | None
-    phase: str = ""  # names a preliminary pass within the stage (extract's LOCATING scan), "" otherwise
+    phase: str = ""  # names a preliminary pass within the stage (the locating scan), "" otherwise
 
 
 @dataclass(frozen=True)
@@ -77,7 +93,7 @@ class StageCounts:
 @dataclass(frozen=True)
 class StageFinished:
     stage: str
-    state: str  # DONE, NOTHING_TO_DO or STOPPED
+    state: str  # DONE, NOTHING_TO_DO, STOPPED or (include only) SKIPPED
     summary: Any  # None when nothing the stage did was kept (a failed preflight check rolls back)
     note: str | None = None  # something the user should know, e.g. an edited review table left as it is
 

@@ -9,6 +9,9 @@ classify, extract and review in one go through the run engine (see
 ``engine.pipeline``) and prints its events. ``mark-added`` ticks a flight on
 the manual-add list in the store, and ``sources`` lists the saved text of
 each flight's source emails.
+``session`` describes the session in the store and, with
+``--fresh-preview``, what ``run --fresh`` would delete (see
+``engine.session``).
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
@@ -27,10 +30,13 @@ from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .engine import session
 from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
 from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
 from .engine.report import format_report
+from .engine.events import AUDIT, INCLUDE, STOPPED
+from .engine.thorough import format_include
 from .flights.decisions import is_date, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
@@ -41,6 +47,7 @@ from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
 from .store import Store
+from .threshold import effective_threshold
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -106,6 +113,7 @@ def cmd_classify(args: argparse.Namespace, config: Config) -> int:
     store_path = _store_path(args, config)
     client = decision_client(config)
     with _pass_store(store_path, client, "[models] decision", "classify", config) as store:
+        session.begin(store, config, mailbox_path, config.thoroughness)
         try:
             summary = run_classify(config, mailbox_path, store, client)
         except KeyboardInterrupt as exc:
@@ -122,6 +130,7 @@ def cmd_extract(args: argparse.Namespace, config: Config) -> int:
     mailbox_path = _mailbox_path(args, config)
     client = _extraction_client(config)
     with _pass_store(_store_path(args, config), client, "[models] extraction", "extract", config) as store:
+        session.begin(store, config, mailbox_path, config.thoroughness)
         try:
             summary = extract.run_extract(config, mailbox_path, store, client)
         except KeyboardInterrupt as exc:
@@ -147,6 +156,7 @@ def cmd_audit(args: argparse.Namespace, config: Config) -> int:
         return EXIT_ERROR
     client = _extraction_client(config)
     with _pass_store(store_path, client, "[models] extraction", "audit", config) as store:
+        session.begin(store, config, mailbox_path, config.thoroughness)
         try:
             result = audit.run_audit(config, mailbox_path, store, client, sample_size, seed)
         except KeyboardInterrupt as exc:
@@ -157,7 +167,8 @@ def cmd_audit(args: argparse.Namespace, config: Config) -> int:
         if not result.classified:
             print(f"error: {audit.no_population_message(result, config)}", file=sys.stderr)
             return EXIT_ERROR
-        audit.write_audit_csv(output, result, config.threshold)
+        audit.write_audit_csv(output, result, effective_threshold(config, store))
+        session.record_written(store, session.AUDIT_REPORT, output)
         print(audit.format_report(result, config, store, output))
     return EXIT_OK
 
@@ -175,6 +186,9 @@ def cmd_review(args: argparse.Namespace, config: Config) -> int:
         except review.ReviewExists as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_ERROR
+        session.record_written(store, session.REVIEW_TABLE, review_path)
+        session.record_written(store, session.FAILURES_FILE, failures_path)
+        session.touch(store)
     print(review.format_summary(summary))
     for warning in review.format_warnings(summary):
         print(warning, file=sys.stderr)
@@ -201,11 +215,13 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
                 summary = export.run_store_export(
                     config, store, output_dir, config.export_data_dir, config.export_data_url
                 )
+                _record_export(store, summary)
         elif store_path.is_file():
             with Store(store_path) as store:
                 summary = export.run_export(
                     review_path, output_dir, config.export_data_dir, config.export_data_url, store=store, config=config
                 )
+                _record_export(store, summary)
         else:
             summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)
     except (export.ExportError, ReferenceDataError) as exc:
@@ -213,6 +229,15 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
         return EXIT_ERROR
     print(export.format_summary(summary))
     return EXIT_OK
+
+
+def _record_export(store: Store, summary: export.ExportSummary) -> None:
+    """Record the files an export wrote for the session in ``store``."""
+    if summary.import_path is not None:
+        session.record_written(store, session.IMPORT_FILE, summary.import_path)
+    if summary.manual_add_path is not None:
+        session.record_written(store, session.MANUAL_ADD_LIST, summary.manual_add_path)
+    session.touch(store)
 
 
 COMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None], Callable[..., int]]] = {}
@@ -325,6 +350,7 @@ def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
     with Store(store_path) as store:
         key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
         store.set_added(key, not args.undo)
+        session.touch(store)
     if args.undo:
         print(f"Flight {key} is no longer marked as added in Flighty.")
     else:
@@ -410,6 +436,12 @@ class _RunPrinter:
             print(format_report(event.report))
 
     def _summary(self, event: StageFinished) -> None:
+        if event.stage == AUDIT:
+            self._audit_summary(event)
+            return
+        if event.stage == INCLUDE:
+            print(format_include(event.summary, stopped=event.state == STOPPED))
+            return
         if event.stage in (CLASSIFY, EXTRACT):
             formatter = format_summary if event.stage == CLASSIFY else extract.format_summary
             with Store(self.store_path) as store:
@@ -423,10 +455,25 @@ class _RunPrinter:
         for warning in review.format_warnings(event.summary):
             _warn(warning)
 
+    def _audit_summary(self, event: StageFinished) -> None:
+        result = event.summary
+        if event.state == STOPPED:
+            print(audit.format_interrupted(result))
+        elif not result.classified:
+            print(audit.no_population_message(result, self.config))
+        else:
+            with Store(self.store_path) as store:
+                # The include stage acts on the reading at once: no advice to do it by hand.
+                print(audit.format_report(result, self.config, store, self.config.audit_output, advice=False))
+
 
 def cmd_run(args: argparse.Namespace, config: Config) -> int:
     mailbox_path = _mailbox_path(args, config)
     store_path = _store_path(args, config)
+    if args.fresh:
+        # Never asks: the session is cleared and the run starts from scratch.
+        for line in session.format_fresh(session.start_fresh(store_path)):
+            print(line)
     stop_requested: list[int] = []
     # SIGTERM asks the run to stop after the message in progress.
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop_requested.append(signum))
@@ -469,12 +516,19 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
         "--thoroughness",
         choices=("quick", "thorough"),
         help="how hard to look for flight emails the first filter missed (overrides [run] thoroughness); "
-        "quick runs no audit",
+        "quick runs no audit; thorough audits after extract and, within [audit] auto_include_budget, lowers the "
+        "threshold for this session",
     )
     parser.add_argument("--output", help="review CSV to write (overrides [review] output in config)")
     parser.add_argument("--failures", help="failures CSV to write (overrides [review] failures in config)")
     parser.add_argument(
         "--force", action="store_true", help="regenerate the review CSV even if it has been edited"
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="start fresh without asking: delete the store, its side files and the files the tool wrote for "
+        "it, then run from scratch (the mailbox, config file and reference data are kept)",
     )
 
 
@@ -483,6 +537,40 @@ COMMANDS["run"] = (
     "an end-of-run report",
     _run_arguments,
     cmd_run,
+)
+
+
+def cmd_session(args: argparse.Namespace, config: Config) -> int:
+    store_path = _store_path(args, config)
+    if args.fresh_preview:
+        result = session.start_fresh(store_path, preview=True)
+        if not result.store_existed:
+            print("No session yet.")
+            return EXIT_OK
+        print("Starting fresh would delete:")
+        for line in session.format_fresh(result):
+            print(f"  {line}")
+        print(session.KEPT_WHEN_FRESH)
+        return EXIT_OK
+    description = session.describe(config, store_path)
+    print("No session yet." if description is None else session.format_description(description))
+    return EXIT_OK
+
+
+def _session_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    parser.add_argument(
+        "--fresh-preview",
+        action="store_true",
+        help="list what starting fresh (run --fresh) would delete, without deleting anything",
+    )
+
+
+COMMANDS["session"] = (
+    "describe the session in the store: the mailbox and settings it was started with, how far each stage "
+    "got, when it was last active, the files it wrote and what starting fresh would lose (reads only)",
+    _session_arguments,
+    cmd_session,
 )
 
 
