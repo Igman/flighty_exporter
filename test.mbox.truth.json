@@ -1,0 +1,231 @@
+{
+  "owner": {
+    "name": "Jordan Ellis",
+    "address": "jordan.ellis@example.com"
+  },
+  "model": "gemma4:12b",
+  "total_messages": 200,
+  "flight_messages": [
+    {
+      "message_id": "<201709120831.0028@iberia.example>",
+      "key": "ib-confirm-es",
+      "kind": "booking",
+      "language": "Spanish",
+      "booking_reference": "T6WY3F",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2017-10-05",
+          "airline": "Iberia",
+          "flight_number": "IB3170",
+          "origin": "MAD",
+          "destination": "BCN"
+        }
+      ]
+    },
+    {
+      "message_id": "<201806181523.0046@northwindtravel.example>",
+      "key": "agency-itinerary",
+      "kind": "booking",
+      "language": "English",
+      "booking_reference": "M2KQ8B",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2018-07-22",
+          "airline": "Air Canada",
+          "flight_number": "AC759",
+          "origin": "YYZ",
+          "destination": "SFO"
+        }
+      ]
+    },
+    {
+      "message_id": "<201902200914.0058@united.example>",
+      "key": "ua-confirm",
+      "kind": "booking",
+      "language": "English",
+      "booking_reference": "K7QM2L",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2019-03-14",
+          "airline": "United Airlines",
+          "flight_number": "UA328",
+          "origin": "SFO",
+          "destination": "ORD"
+        }
+      ]
+    },
+    {
+      "message_id": "<202107111842.0097@ba.example>",
+      "key": "ba-confirm",
+      "kind": "booking",
+      "language": "English",
+      "booking_reference": "X4TRW9",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2021-09-02",
+          "airline": "British Airways",
+          "flight_number": "BA286",
+          "origin": "SFO",
+          "destination": "LHR"
+        },
+        {
+          "date": "2021-09-16",
+          "airline": "British Airways",
+          "flight_number": "BA285",
+          "origin": "LHR",
+          "destination": "SFO"
+        }
+      ]
+    },
+    {
+      "message_id": "<202109011931.0106@ba.example>",
+      "key": "ba-checkin",
+      "kind": "check-in",
+      "language": "English",
+      "booking_reference": "X4TRW9",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2021-09-02",
+          "airline": "British Airways",
+          "flight_number": "BA286",
+          "origin": "SFO",
+          "destination": "LHR"
+        }
+      ]
+    },
+    {
+      "message_id": "<202203300755.0116@lufthansa.example>",
+      "key": "lh-confirm",
+      "kind": "booking",
+      "language": "English",
+      "booking_reference": "P9ZD4H",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2022-05-20",
+          "airline": "Lufthansa",
+          "flight_number": "LH455",
+          "origin": "SFO",
+          "destination": "FRA"
+        },
+        {
+          "date": "2022-05-21",
+          "airline": "Lufthansa",
+          "flight_number": "LH1232",
+          "origin": "FRA",
+          "destination": "VIE"
+        }
+      ]
+    },
+    {
+      "message_id": "<202204261302.0120@lufthansa.example>",
+      "key": "lh-change",
+      "kind": "change",
+      "language": "English",
+      "booking_reference": "P9ZD4H",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2022-05-20",
+          "airline": "Lufthansa",
+          "flight_number": "LH455",
+          "origin": "SFO",
+          "destination": "FRA"
+        },
+        {
+          "date": "2022-05-21",
+          "airline": "Lufthansa",
+          "flight_number": "LH1238",
+          "origin": "FRA",
+          "destination": "VIE"
+        }
+      ]
+    },
+    {
+      "message_id": "<202310022117.0150@t.delta.example>",
+      "key": "dl-confirm",
+      "kind": "booking",
+      "language": "English",
+      "booking_reference": "HJ3N6V",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2023-11-08",
+          "airline": "Delta Air Lines",
+          "flight_number": "DL1432",
+          "origin": "SEA",
+          "destination": "ATL"
+        }
+      ]
+    },
+    {
+      "message_id": "<202310291006.0152@t.delta.example>",
+      "key": "dl-cancel",
+      "kind": "cancellation",
+      "language": "English",
+      "booking_reference": "HJ3N6V",
+      "passengers": [
+        "Jordan Ellis"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2023-11-08",
+          "airline": "Delta Air Lines",
+          "flight_number": "DL1432",
+          "origin": "SEA",
+          "destination": "ATL"
+        }
+      ]
+    },
+    {
+      "message_id": "<202401151248.0159@alaskaair.example>",
+      "key": "as-other-passenger",
+      "kind": "booking",
+      "language": "English",
+      "booking_reference": "RVL5TC",
+      "passengers": [
+        "Priya Raman"
+      ],
+      "facts_verbatim_in_body": true,
+      "segments": [
+        {
+          "date": "2024-02-10",
+          "airline": "Alaska Airlines",
+          "flight_number": "AS1084",
+          "origin": "SFO",
+          "destination": "PDX"
+        }
+      ]
+    }
+  ]
+}

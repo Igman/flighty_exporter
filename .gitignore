@@ -1,0 +1,51 @@
+# Personal data: everything below can hold your email or flight history.
+# Never commit it. (tests/test_gitignore.py checks the tool's default output
+# names against these rules.)
+
+# The store (SQLite) and its side files.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Your config file (names, paths). The example config stays tracked.
+flighty_exporter.toml
+
+# Review table, failures file and audit report (and their temporary files
+# while being written).
+review.csv
+failures.csv
+audit.csv
+*.csv.tmp
+
+# Export: the import file for Flighty and the manual-add list.
+openflights-backup-*.csv
+manual-add.csv
+
+# Mailbox files and Google Takeout archives.
+*.mbox
+*.mbx
+takeout-*.zip
+*.tgz
+
+# Exception: the synthetic test mailbox (invented emails only) and its truth
+# file stay trackable.
+!/test.mbox
+!/test.mbox.truth.json
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/

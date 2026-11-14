@@ -1,0 +1,104 @@
+# Copy to flighty_exporter.toml (git-ignored) and edit. Every setting is
+# optional; the values below are the defaults. Relative paths are resolved
+# against this file's directory.
+
+# The Gmail Takeout mbox. Can also be given with `--mailbox PATH` (classify, extract, audit).
+# mailbox = "Takeout/Mail/All mail Including Spam and Trash.mbox"
+
+# SQLite store holding every pass's results (personal data: never commit it).
+store = "flighty_exporter.db"
+
+[ollama]
+# classify, extract and audit send email content here, so the address must be
+# on this machine: localhost, 127.x.x.x, [::1], or a name that resolves only to
+# those. Before a pass's first model request the server must answer (start it
+# with `ollama serve` or the Ollama app), be version 0.35.0 or later, and have
+# the pass's model pulled (`ollama pull <model>`).
+address = "http://localhost:11434"
+# Per-request timeout for model requests. (The preflight check uses at most 5 seconds.)
+timeout_seconds = 300
+# Set to true only if you mean to send your email content to a model server
+# on another machine (same as `--allow-remote`). Every run then warns.
+allow_remote = false
+
+[models]
+decision = "nimble"
+extraction = "gemma4:12b-it-q4_K_M"
+
+[classify]
+# Gate probability at or above which a message goes to the extract pass.
+# Not applied by classify: changing it never requires classifying again.
+threshold = 0.05
+# How much of each message's cleaned body (in characters) the decision model
+# sees, with the sender, subject and attachment filenames. Keeps the prompt
+# under the decision model's 8,192-token limit; a message the server still
+# rejects as too long is retried with its body halved (up to 3 times).
+max_body_chars = 12000
+
+[extract]
+# Context length for each extraction request: a long email plus the schema.
+num_ctx = 16384
+# Output cap. An answer that stops at the cap is treated as invalid.
+num_predict = 1500
+# How many times an invalid or cut-off answer is retried before the message
+# is recorded as a failure.
+retries = 2
+# Cap on what the extraction model reads (in characters): the whole cleaned
+# body, then the text of each PDF attachment, cut at this budget to stay
+# inside num_ctx. Cut inputs are counted as "inputs truncated" in the summary.
+max_input_chars = 36000
+
+[review]
+# Review table and failures file written by `review` (personal data: never
+# commit them). Can also be given with `review --output` / `--failures`.
+# `export` reads the edited review table from `output` (or `export --review`).
+# review overwrites an existing table only if it is unchanged since review
+# wrote it; an edited one needs `review --force`.
+output = "review.csv"
+failures = "failures.csv"
+# Confidence cut-off. Each extracted flight carries the model's confidence,
+# halved once for every failed check (unknown airport or airline code,
+# malformed flight number, same origin and destination, implausible date). A
+# flight below the cut-off is flagged "low confidence". Rows with any of these
+# flags are pre-set to keep = no and marked needs_attention.
+min_confidence = 0.7
+
+[passenger]
+# Your name variants as they appear on bookings (spelling with or without a
+# middle name, a maiden name, ...). Case, accents, word order, punctuation and
+# titles (Mr, Mrs, Dr, ...) are ignored, so "ELLIS/JORDAN MR", "Ellis, Jordan"
+# and "Jördan Éllis" all match "Jordan Ellis". A booking whose passengers
+# include none of these names is left out of the review table (review lists
+# what it dropped); a booking that names no passenger is kept and marked
+# needs_attention. Empty (the default) turns passenger filtering off.
+# names = ["Jordan Ellis", "Jordan A. Ellis"]
+names = []
+
+[audit]
+# `audit` checks whether real flight emails are hiding below [classify]
+# threshold. It samples up to sample_size messages from each gate-probability
+# band (0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1), sends the sampled
+# ones that have no extraction yet to the extraction model (stored exactly as
+# extract stores them, so a later extract never repeats them), and reports per
+# band how many contained flight segments, also for messages with a PDF
+# attachment only. The same seed gives the same sample; rerunning sends
+# nothing new. The report is also written to output (personal data: never
+# commit it). Can also be given with `audit --sample-size`, `--seed`, `--output`.
+# The config is never changed: lower [classify] threshold yourself if the
+# report says so, then run extract.
+sample_size = 25
+seed = 1
+output = "audit.csv"
+
+[export]
+# Where `export` writes the import file for Flighty
+# (openflights-backup-YYYY-MM-DD-HHMM.csv) and the manual-add list
+# (manual-add.csv). Personal data: never commit them. Defaults to this file's
+# directory. Can also be given with `export --output-dir`.
+# output_dir = "."
+# OpenFlights' airports.dat and airlines.dat (Open Database License), needed
+# to write the import file and used by `review` to check airport and airline
+# codes (if they cannot be loaded, review skips the code checks and warns). Downloaded from data_url on first use and reused
+# thereafter; the download sends nothing about you.
+data_dir = "~/.cache/flighty_exporter/openflights"
+data_url = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
