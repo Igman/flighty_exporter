@@ -42,10 +42,9 @@ from pathlib import Path
 
 from ..config import Config
 from ..flights.consolidate import BOOKED_ONLY, CONFIRMED, NO_PASSENGER_NAMED, DroppedBooking, Flight, SourceRecord, consolidate
+from ..flights.records import MARKUP_SOURCE
 from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, check_flights, normalise_record, reason_kind
-from ..mail.markup import MARKUP_SOURCE
-from ..stages.extract import PASS_NAME
-from ..store import Store
+from ..store import EXTRACT_PASS, Store
 from ..tables import format_message_date, write_csv
 from .openflights import OpenFlights, ReferenceDataError
 
@@ -148,7 +147,7 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
             )
         record = records.get(message_id)
         if record is None:
-            reason = store.failure_reason(message_id, PASS_NAME) or NOT_EXTRACTED
+            reason = store.failure_reason(message_id, EXTRACT_PASS) or NOT_EXTRACTED
             failures.append(
                 {"message_id": message_id, "message_date": message_date, "sender": sender,
                  "subject": subject, "reason": reason}

@@ -24,9 +24,9 @@ from ..flights.records import EMAIL_KINDS
 from ..mail.reader import Mailbox, Message
 from ..ollama.extraction import ExtractionClient, ExtractionFailed
 from ..progress import Progress
-from ..store import Store
+from ..store import EXTRACT_PASS, Store
 
-PASS_NAME = "extract"
+PASS_NAME = EXTRACT_PASS
 NOT_IN_MAILBOX = "message is no longer in the mailbox (classified from a different mbox?)"
 
 

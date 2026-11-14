@@ -38,8 +38,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
-from ..config import DEFAULT_DATA_URL
-
 DATA_FILES = ("airports.dat", "airlines.dat")
 DOWNLOAD_TIMEOUT_SECONDS = 60
 
@@ -93,7 +91,7 @@ class OpenFlights:
         self._airlines = airlines
 
     @classmethod
-    def load(cls, data_dir: Path, data_url: str = DEFAULT_DATA_URL) -> "OpenFlights":
+    def load(cls, data_dir: Path, data_url: str) -> "OpenFlights":
         """Read the reference data from ``data_dir``, downloading any file
         that is missing. Raises ReferenceDataError if that fails."""
         paths = {name: _ensure_file(data_dir, name, data_url) for name in DATA_FILES}

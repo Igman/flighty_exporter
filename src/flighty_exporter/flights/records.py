@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+# The ``model`` of a record parsed from the email's own machine-readable data
+# (see ``mail.markup``) rather than read by the extraction model.
+MARKUP_SOURCE = "markup"
+
 EMAIL_KINDS = ("booking", "change", "cancellation", "check-in", "other")
 
 RECORD_FIELDS = ("email_kind", "booking_reference", "passengers", "segments")

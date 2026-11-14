@@ -2,7 +2,7 @@
 audit and manual-add files): the CSV writer and how a message's date is shown.
 
 At the top level because both a stage (audit) and the output group (review,
-export) use it, and neither may depend on the other's side for this.
+export) use it, and those two groups may not import each other.
 """
 
 from __future__ import annotations

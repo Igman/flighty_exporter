@@ -8,10 +8,10 @@ import only from the groups listed for it in ``ALLOWED``:
 - flights imports nothing else from the package (pure domain);
 - mail may import only the record types (``flights.records``);
 - ollama may import the message type from mail and the record types;
-- the top-level core (config, store, progress, tables) may import flights
-  and mail, never a stage, the output group or the command line;
-- stages and output may import from everything below them, and output from
-  the stages; neither imports the command line.
+- the top-level core (config, store, progress, tables) may import only
+  flights;
+- stages and output may import from everything below them, but not from
+  each other, and neither imports the command line.
 
 No module imports a name beginning with an underscore from another module,
 and there are no import cycles between groups. The imports are read with
@@ -45,9 +45,9 @@ ALLOWED: dict[str, set[str]] = {
     "flights": set(),
     "mail": {"flights"},
     "ollama": {"mail", "flights"},
-    "core": {"mail", "flights"},
+    "core": {"flights"},
     "stages": {"core", "ollama", "mail", "flights"},
-    "output": {"stages", "core", "ollama", "mail", "flights"},
+    "output": {"core", "ollama", "mail", "flights"},
     "entry": {"output", "stages", "core", "ollama", "mail", "flights"},
 }
 

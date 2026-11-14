@@ -24,9 +24,9 @@ from ..mail.markup import parse_markup
 from ..mail.reader import Mailbox, Message, Skipped, Unreadable
 from ..ollama.decision import EMAIL_TYPES, DecisionClient, DecisionError
 from ..progress import Progress
-from ..store import Store
+from ..store import CLASSIFY_PASS, Store
 
-PASS_NAME = "classify"
+PASS_NAME = CLASSIFY_PASS
 GATE_BANDS = (0.5, 0.2, 0.05)
 
 

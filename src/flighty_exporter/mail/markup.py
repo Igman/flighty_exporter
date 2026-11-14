@@ -60,9 +60,8 @@ from datetime import date
 from html.parser import HTMLParser
 from typing import Any
 
-from ..flights.records import ExtractionError, ExtractionRecord, validate_record
+from ..flights.records import MARKUP_SOURCE, ExtractionError, ExtractionRecord, validate_record
 
-MARKUP_SOURCE = "markup"
 MARKUP_CONFIDENCE = 1.0
 
 FLIGHT_RESERVATION = "FlightReservation"

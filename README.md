@@ -684,10 +684,9 @@ The dependency rule, enforced by `tests/test_layout.py`:
   a record).
 - `ollama` may import the message type (`mail.reader.Message`) and the record
   types; nothing from `stages`, `output` or the top level.
-- `config`, `store`, `progress` and `tables` may import `flights` and `mail`
-  only.
-- `stages` and `output` may import from everything below them (`output` from
-  `stages` too); neither imports `cli`.
+- `config`, `store`, `progress` and `tables` may import `flights` only.
+- `stages` and `output` may import from everything below them, but not from
+  each other; neither imports `cli`.
 - No module imports a name beginning with an underscore from another module,
   and there are no import cycles. A new module must be given a group in the
   test.
