@@ -22,10 +22,7 @@ from __future__ import annotations
 
 import json
 import re
-import socket
 import urllib.error
-import urllib.request
-from collections.abc import Callable
 from typing import Any
 
 from ..flights.records import (
@@ -39,7 +36,7 @@ from ..flights.records import (
     validate_record,
 )
 from ..mail.reader import Message
-from .connection import OLLAMA_OPENER, OllamaUnreachable
+from .connection import OllamaClient, RequestTimedOut
 
 ENDPOINT = "/api/chat"
 
@@ -99,7 +96,7 @@ class ExtractionFailed(ExtractionError):
         self.attempts = attempts
 
 
-class ExtractionClient:
+class ExtractionClient(OllamaClient):
     def __init__(
         self,
         address: str,
@@ -111,11 +108,7 @@ class ExtractionClient:
         retries: int = 2,
         max_input_chars: int = DEFAULT_MAX_INPUT_CHARS,
     ):
-        self.address = address.rstrip("/")
-        self.model = model
-        # Called once, just before the first request (the preflight check).
-        self.before_first_request: Callable[[], None] | None = None
-        self.timeout = timeout
+        super().__init__(address, model, timeout)
         self.num_ctx = num_ctx
         self.num_predict = num_predict
         self.retries = retries
@@ -145,30 +138,13 @@ class ExtractionClient:
         raise ExtractionFailed(f"no valid answer after {attempts} {noun}; last: {errors[-1]}", attempts)
 
     def _post(self, payload: dict[str, Any]) -> Any:
-        if self.before_first_request is not None:
-            self.before_first_request()
-            self.before_first_request = None
-        request = urllib.request.Request(
-            self.address + ENDPOINT,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with OLLAMA_OPENER.open(request, timeout=self.timeout) as response:
-                raw = response.read()
+            raw = self.send(ENDPOINT, json.dumps(payload).encode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
             raise ExtractionError(f"HTTP {exc.code} from chat endpoint: {detail}") from exc
-        except (TimeoutError, socket.timeout) as exc:
+        except RequestTimedOut as exc:
             raise _Timeout(f"chat request timed out after {self.timeout:g}s") from exc
-        except (urllib.error.URLError, ConnectionError) as exc:
-            reason = getattr(exc, "reason", exc)
-            if isinstance(reason, (TimeoutError, socket.timeout)):
-                raise _Timeout(f"chat request timed out after {self.timeout:g}s") from exc
-            raise OllamaUnreachable(
-                f"cannot reach Ollama at {self.address}: {reason}. Is `ollama serve` running?"
-            ) from exc
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
