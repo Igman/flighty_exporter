@@ -20,7 +20,10 @@ from ..config import Config
 from ..engine.report import RunReport
 from .runner import RunInputs
 from .screens.progress import ProgressScreen
-from .screens.setup_unavailable import SetupUnavailableScreen
+from ..engine import session
+from ..engine.setup import answers_from_config
+from .screens.setup import SetupScreen
+from .screens.startup import StartupScreen
 
 
 class FlightyApp(App[int]):
@@ -40,13 +43,15 @@ class FlightyApp(App[int]):
         self.push_screen(self.first_screen())
 
     def first_screen(self) -> Screen:
-        """The progress screen when the config names a mailbox that exists;
-        otherwise the placeholder that says how to set one (guided setup,
-        a later ticket, goes here)."""
-        mailbox = self.config.mailbox
-        if mailbox is None or not mailbox.is_file():
-            return SetupUnavailableScreen(self.config_path, mailbox)
-        return ProgressScreen(RunInputs.from_config(self.config, mailbox))
+        """The startup prompt (resume or start fresh) when a session exists;
+        otherwise setup, prefilled from the config file, so that a first run
+        confirms its three answers (one key accepts them as they are).
+        Setup moves on to the model-server check and from there to the
+        progress screen; resume goes to the progress screen directly."""
+        description = session.describe(self.config, self.config.store)
+        if description is not None:
+            return StartupScreen(description)
+        return SetupScreen(answers_from_config(self.config))
 
     def show_screen(self, screen: Screen) -> None:
         """Replace the current screen with ``screen``."""

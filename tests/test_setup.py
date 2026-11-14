@@ -252,6 +252,23 @@ def test_a_config_in_another_folder_gets_a_path_that_resolves_to_the_same_file(w
     assert (config_dir / data["mailbox"]).resolve() == box.resolve()
 
 
+def test_a_config_folder_reached_through_a_symbolic_link_still_gets_a_relative_path(workspace):
+    """As on macOS, where /var is a link to /private/var: the mailbox named
+    by its real folder is still inside the config file's folder."""
+    real = workspace.root / "real"
+    real.mkdir()
+    (workspace.root / "link").symlink_to(real)
+    box = write_mbox(real / "mail.mbox", [email("Hello there")])
+    config_path = workspace.root / "link" / "flighty_exporter.toml"
+    command = workspace.command("setup", "--mailbox", str(box))
+    command[command.index("--config") + 1] = str(config_path)
+
+    proc = subprocess.run(command, cwd=workspace.root, env=workspace.env(), capture_output=True, text=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert tomllib.loads(config_path.read_text())["mailbox"] == "mail.mbox"
+
+
 def test_the_written_mailbox_is_the_one_the_commands_read(workspace):
     box = mbox(workspace)
     assert workspace.run("setup", "--mailbox", str(box)).returncode == 0

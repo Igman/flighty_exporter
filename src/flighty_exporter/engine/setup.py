@@ -251,10 +251,17 @@ def mailbox_setting(mailbox: Path, config_dir: Path) -> str:
     """The text to write for ``mailbox``: relative to ``config_dir`` when
     the file is inside it, else absolute."""
     absolute = Path(os.path.abspath(mailbox.expanduser()))
-    try:
-        return absolute.relative_to(os.path.abspath(config_dir)).as_posix()
-    except ValueError:
-        return str(absolute)
+    # Folders are compared as written and with symbolic links followed (on
+    # macOS /var is /private/var); the file's own name is kept.
+    for folder, base in (
+        (absolute.parent, Path(os.path.abspath(config_dir))),
+        (Path(os.path.realpath(absolute.parent)), Path(os.path.realpath(config_dir))),
+    ):
+        try:
+            return (folder.relative_to(base) / absolute.name).as_posix()
+        except ValueError:
+            continue
+    return str(absolute)
 
 
 def _read(config_path: Path) -> str:
