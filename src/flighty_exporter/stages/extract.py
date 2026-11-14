@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import TextIO
 
 from ..config import Config
+from ..flights.records import EMAIL_KINDS
 from ..mail.reader import Mailbox, Message
-from ..ollama.extraction import EMAIL_KINDS, ExtractionClient, ExtractionFailed
+from ..ollama.extraction import ExtractionClient, ExtractionFailed
 from ..progress import Progress
 from ..store import Store
 

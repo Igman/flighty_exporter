@@ -35,9 +35,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .flights.records import Decision, Extraction, ExtractionRecord
 from .mail.markup import MARKUP_SOURCE
-from .ollama.decision import Decision
-from .ollama.extraction import Extraction, ExtractionRecord
 
 SCHEMA_VERSION = 4
 

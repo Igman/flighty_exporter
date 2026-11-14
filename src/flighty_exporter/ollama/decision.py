@@ -22,9 +22,9 @@ import socket
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
+from ..flights.records import Decision
 from ..mail.reader import Message
 from .preflight import OLLAMA_OPENER
 
@@ -59,15 +59,6 @@ EMAIL_TYPES: dict[str, str] = {
     "marketing": "A promotion, fare sale, newsletter or advertisement.",
     "other": "Anything else.",
 }
-
-
-@dataclass(frozen=True)
-class Decision:
-    gate_probability: float
-    email_type: str
-    type_probabilities: dict[str, float]
-    type_confidence: float | None
-    model: str
 
 
 class DecisionError(Exception):

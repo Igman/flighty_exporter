@@ -48,8 +48,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..ollama.extraction import ExtractionRecord, Segment
 from .passengers import matches_any, names_someone
+from .records import ExtractionRecord, Segment
 
 CONFIRMED = "confirmed"
 BOOKED_ONLY = "booked only"

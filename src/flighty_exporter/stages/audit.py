@@ -48,8 +48,9 @@ from pathlib import Path
 from typing import TextIO
 
 from ..config import Config
+from ..flights.records import ExtractionRecord
 from ..mail.reader import Mailbox, Message
-from ..ollama.extraction import ExtractionClient, ExtractionRecord
+from ..ollama.extraction import ExtractionClient
 from ..output.review import _message_date, write_csv
 from ..progress import Progress
 from ..store import Store

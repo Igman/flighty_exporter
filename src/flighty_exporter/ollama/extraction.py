@@ -21,16 +21,23 @@ times before the message is given up on.
 from __future__ import annotations
 
 import json
-import math
 import re
 import socket
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import date
 from typing import Any
 
+from ..flights.records import (
+    EMAIL_KINDS,
+    RECORD_FIELDS,
+    SEGMENT_FIELDS,
+    Extraction,
+    ExtractionError,
+    ExtractionRecord,
+    preview,
+    validate_record,
+)
 from ..mail.reader import Message
 from .decision import OllamaUnreachable
 from .preflight import OLLAMA_OPENER
@@ -39,10 +46,6 @@ ENDPOINT = "/api/chat"
 
 DEFAULT_MAX_INPUT_CHARS = 36000
 TRUNCATION_NOTE = "[... input truncated ...]"
-
-EMAIL_KINDS = ("booking", "change", "cancellation", "check-in", "other")
-
-SEGMENT_FIELDS = ("date", "airline", "flight_number", "origin", "destination", "confidence")
 
 # Kept shallow and flat: nested schemas are less reliable with local models.
 SCHEMA: dict[str, Any] = {
@@ -67,7 +70,7 @@ SCHEMA: dict[str, Any] = {
             },
         },
     },
-    "required": ["email_kind", "booking_reference", "passengers", "segments"],
+    "required": list(RECORD_FIELDS),
 }
 
 SYSTEM_PROMPT = """You read one email and extract the flights it describes as JSON.
@@ -87,49 +90,6 @@ Answer with a single JSON object and nothing else, with exactly these keys:
 Only include flights (air travel). Trains, buses, ferries, hotels and car hire are not segments.
 If the email describes no specific booked flight, use "email_kind": "other" and an empty "segments" list.
 Do not invent details that are not in the email; use your best reading of the email text."""
-
-
-@dataclass(frozen=True)
-class Segment:
-    date: str
-    airline: str
-    flight_number: str
-    origin: str
-    destination: str
-    confidence: float
-
-
-@dataclass(frozen=True)
-class ExtractionRecord:
-    email_kind: str
-    booking_reference: str | None
-    passengers: tuple[str, ...]
-    segments: tuple[Segment, ...]
-    model: str
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "email_kind": self.email_kind,
-            "booking_reference": self.booking_reference,
-            "passengers": list(self.passengers),
-            "segments": [segment.__dict__ for segment in self.segments],
-        }
-
-    @classmethod
-    def from_json(cls, data: dict[str, Any], model: str) -> "ExtractionRecord":
-        return validate_record(data, model)
-
-
-@dataclass(frozen=True)
-class Extraction:
-    record: ExtractionRecord
-    attempts: int
-    # The input was cut at the character budget.
-    input_truncated: bool = False
-
-
-class ExtractionError(Exception):
-    """One answer was unusable; the run can continue."""
 
 
 class ExtractionFailed(ExtractionError):
@@ -260,80 +220,8 @@ def parse_response(response: Any, model: str) -> ExtractionRecord:
     try:
         data = json.loads(_strip_code_fence(content))
     except json.JSONDecodeError:
-        raise ExtractionError(f"answer is not JSON: {_preview(content)}") from None
+        raise ExtractionError(f"answer is not JSON: {preview(content)}") from None
     return validate_record(data, model)
-
-
-def validate_record(data: Any, model: str) -> ExtractionRecord:
-    """Check the record's structure and types. Airline and airport codes are
-    not checked against reference tables here."""
-    if not isinstance(data, dict):
-        raise ExtractionError(f"answer is not a JSON object: {_preview(json.dumps(data))}")
-    missing = [key for key in SCHEMA["required"] if key not in data]
-    if missing:
-        raise ExtractionError(f"answer is missing {', '.join(missing)}: {_preview(json.dumps(data))}")
-
-    kind = data["email_kind"]
-    if kind not in EMAIL_KINDS:
-        raise ExtractionError(f"email_kind is not one of {', '.join(EMAIL_KINDS)}: {kind!r}")
-
-    reference = data["booking_reference"]
-    if reference is not None and not isinstance(reference, str):
-        raise ExtractionError(f"booking_reference is not a string or null: {reference!r}")
-    reference = (reference or "").strip() or None
-
-    passengers = data["passengers"]
-    if not isinstance(passengers, list) or not all(isinstance(p, str) for p in passengers):
-        raise ExtractionError(f"passengers is not a list of strings: {passengers!r}")
-
-    segments = data["segments"]
-    if not isinstance(segments, list):
-        raise ExtractionError(f"segments is not a list: {segments!r}")
-    return ExtractionRecord(
-        email_kind=kind,
-        booking_reference=reference,
-        passengers=tuple(p.strip() for p in passengers if p.strip()),
-        segments=tuple(_segment(i, s) for i, s in enumerate(segments, 1)),
-        model=model,
-    )
-
-
-_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-def _segment(index: int, data: Any) -> Segment:
-    where = f"segment {index}"
-    if not isinstance(data, dict):
-        raise ExtractionError(f"{where} is not an object: {data!r}")
-    missing = [key for key in SEGMENT_FIELDS if key not in data]
-    if missing:
-        raise ExtractionError(f"{where} is missing {', '.join(missing)}")
-    for key in ("date", "airline", "flight_number", "origin", "destination"):
-        if not isinstance(data[key], str):
-            raise ExtractionError(f"{where} {key} is not a string: {data[key]!r}")
-    day = data["date"].strip()
-    try:
-        if not _DATE.match(day):
-            raise ValueError
-        date.fromisoformat(day)
-    except ValueError:
-        raise ExtractionError(f"{where} date is not a valid YYYY-MM-DD date: {data['date']!r}") from None
-    confidence = data["confidence"]
-    if (
-        isinstance(confidence, bool)
-        or not isinstance(confidence, (int, float))
-        or not math.isfinite(confidence)
-        or not 0.0 <= confidence <= 1.0
-    ):
-        raise ExtractionError(f"{where} confidence is not a number from 0 to 1: {confidence!r}")
-    return Segment(
-        date=day,
-        airline=data["airline"].strip(),
-        flight_number=data["flight_number"].strip(),
-        origin=data["origin"].strip(),
-        destination=data["destination"].strip(),
-        confidence=float(confidence),
-    )
 
 
 def _strip_code_fence(text: str) -> str:
@@ -341,7 +229,3 @@ def _strip_code_fence(text: str) -> str:
     match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
     return match.group(1) if match else text
 
-
-def _preview(text: str) -> str:
-    text = " ".join(text.split())
-    return repr(text[:150] + ("..." if len(text) > 150 else ""))
