@@ -23,11 +23,11 @@ REVIEW = "review.csv"
 DISCARDED = "decisions discarded because their flight is no longer produced"
 RECORDED = "decisions recorded from the review table"
 
-GOOD = booking("Your trip GOOD01", seg("2025-05-12", "ZZ1234", "LIS", "OSL", confidence=0.95))
-OTHER = booking("Your trip OTHR02", seg("2025-06-01", "QQ410", "AMS", "KEF", confidence=0.9), day="02")
-FLAGGED = booking("Your trip FLAG03", seg("2025-07-01", "ZZ300", "LIS", "XQX", confidence=0.9), day="03")
-NO_NUMBER = booking("Your trip NONR04", seg("2025-08-01", "", "OSL", "LIS", confidence=0.9), day="04")
-OLD = booking("Your trip OLDY05", seg("2004-08-01", "ZZ9", "OSL", "LIS", confidence=0.9), day="05")
+GOOD = booking("Your trip GOOD01", seg("2025-05-12", "ZZ1234", "LIS", "OSL", confidence=0.95), reference="GOOD01")
+OTHER = booking("Your trip OTHR02", seg("2025-06-01", "QQ410", "AMS", "KEF", confidence=0.9), day="02", reference="OTHR02")
+FLAGGED = booking("Your trip FLAG03", seg("2025-07-01", "ZZ300", "LIS", "XQX", confidence=0.9), day="03", reference="FLAG03")
+NO_NUMBER = booking("Your trip NONR04", seg("2025-08-01", "", "OSL", "LIS", confidence=0.9), day="04", reference="NONR04")
+OLD = booking("Your trip OLDY05", seg("2004-08-01", "ZZ9", "OSL", "LIS", confidence=0.9), day="05", reference="OLDY05")
 
 
 def run_passes(workspace, mails: list[Mail]) -> None:
@@ -176,3 +176,133 @@ def test_a_later_edit_replaces_the_recorded_decision(workspace):
     review(workspace, "--force")
     assert view(rows_by_id(workspace.root / REVIEW)["2025-06-01 QQ410"]) == (
         "yes", "2025-06-01", "QQ410", "AMS", "KEF", "")
+
+
+# -- exporting from the store ----------------------------------------------------------------
+
+
+def test_export_from_the_store_with_no_review_table_matches_the_spreadsheet_route(workspace):
+    run_passes(workspace, [GOOD, OTHER, FLAGGED, NO_NUMBER, OLD])
+    review(workspace)
+
+    def edit(rows):
+        rows["2025-06-01 QQ410"].update(keep="no")
+        rows["2025-05-12 ZZ1234"].update(flight_number="ZZ1235")
+        rows["2025-07-01 ZZ300"].update(destination="KEF", keep="yes")
+
+    edit_review(workspace, edit)
+    via_table = export(workspace, "--output-dir", "via-table")
+    (workspace.root / REVIEW).unlink()
+
+    via_store = export(workspace, "--output-dir", "via-store")
+
+    assert "Flight list read from the store" in via_store.stdout
+    assert "store (saved review decisions applied)" in via_store.stdout
+    assert RECORDED not in via_store.stdout
+    assert via_store.count(DISCARDED) == 0
+    table_file = the_import_file(workspace.root / "via-table")
+    store_file = the_import_file(workspace.root / "via-store")
+    assert store_file.read_bytes() == table_file.read_bytes()
+    assert data_rows(store_file) == [
+        '2025-07-01,LIS,KEF,ZZ300,Fictair,1825,04:09,,,,,,,,"",1638,16,90001,',
+        '2025-05-12,LIS,OSL,ZZ1235,Fictair,1714,03:55,,,,,,,,"",1638,644,90001,',
+    ]
+    manual = read_csv(workspace.root / "via-store" / "manual-add.csv")
+    assert manual == read_csv(workspace.root / "via-table" / "manual-add.csv")
+    assert [(m["date"], m["flight_number"], m["reason"]) for m in manual] == [
+        ("2004-08-01", "ZZ9", "dated before 2006"),
+        ("2025-08-01", "", "no flight number"),
+    ]
+    for label in ("flights exported", "flights to add by hand", "rows", "not kept", "rejected as invalid"):
+        assert via_store.count(label) == via_table.count(label), label
+
+
+def test_from_store_ignores_a_review_table_that_exists(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    # A table the store knows nothing about (no flight_id), dropping every flight.
+    write_review(workspace.root / REVIEW, [{"keep": "no", "date": "2025-05-12", "flight_number": "ZZ1234",
+                                            "origin": "LIS", "destination": "OSL"}],
+                 ["keep", "date", "flight_number", "origin", "destination"])
+
+    from_table = export(workspace, "--output-dir", "table")
+    from_store = export(workspace, "--from-store", "--output-dir", "store")
+
+    assert import_files(workspace.root / "table") == []
+    assert from_table.count(RECORDED) == 0
+    assert [line.split(",")[3] for line in data_rows(the_import_file(workspace.root / "store"))] == [
+        "QQ410", "ZZ1234"]
+    assert from_store.count("flights exported") == 2
+
+
+def test_from_store_without_a_store_is_a_clear_error(workspace):
+    result = workspace.run("export", "--from-store")
+
+    assert result.returncode == 1
+    assert "store not found" in result.stderr
+
+
+def test_review_table_without_a_store_is_exported_as_before(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no"))
+    (workspace.root / "flighty_exporter.db").unlink()
+
+    result = export(workspace)
+
+    assert data_rows(the_import_file(workspace.root)) == [
+        '2025-05-12,LIS,OSL,ZZ1234,Fictair,1714,03:55,,,,,,,,"",1638,644,90001,']
+    assert "source of the export:       review table" in result.stdout
+    assert RECORDED not in result.stdout and DISCARDED not in result.stdout
+
+
+def test_rows_without_a_flight_id_are_exported_but_record_nothing(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    path = workspace.root / REVIEW
+    rows = read_csv(path)
+    for r in rows:
+        r["keep"] = "no" if r["flight_number"] == "QQ410" else r["keep"]
+    # A table from before flight_id existed: the column is not there.
+    write_review(path, rows, [c for c in header(path) if c != "flight_id"])
+
+    result = export(workspace)
+
+    assert result.count(RECORDED) == 0
+    assert result.count("flights exported") == 1
+    review(workspace, "--force")
+    assert [r["keep"] for r in read_csv(path)] == ["yes", "yes"]
+
+
+# -- decisions follow the latest result ------------------------------------------------------
+
+
+def test_decision_whose_flight_disappears_is_discarded_and_counted(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no", destination="LHR"))
+    assert export(workspace).count(RECORDED) == 1
+
+    # A later cancellation email for that booking arrives; the passes run again.
+    cancelled = Mail("Booking OTHR02 cancelled", "20", "cancellation", record("cancellation", "OTHR02"))
+    run_passes(workspace, [GOOD, OTHER, cancelled])
+
+    forced = review(workspace, "--force")
+
+    assert forced.count(DISCARDED) == 1
+    assert list(rows_by_id(workspace.root / REVIEW)) == ["2025-05-12 ZZ1234"]
+    assert review(workspace).count(DISCARDED) == 0
+
+
+def test_export_from_the_store_discards_and_counts_decisions_too(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no"))
+    export(workspace)
+    cancelled = Mail("Booking OTHR02 cancelled", "20", "cancellation", record("cancellation", "OTHR02"))
+    run_passes(workspace, [GOOD, OTHER, cancelled])
+
+    result = export(workspace, "--from-store")
+
+    assert result.count(DISCARDED) == 1
+    assert export(workspace, "--from-store").count(DISCARDED) == 0
