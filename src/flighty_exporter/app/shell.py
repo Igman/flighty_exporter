@@ -19,6 +19,7 @@ from textual.screen import Screen
 from ..config import Config
 from ..engine.report import RunReport
 from .runner import RunInputs
+from .screens.export import ExportScreen
 from .screens.progress import ProgressScreen
 from .screens.setup_unavailable import SetupUnavailableScreen
 
@@ -61,6 +62,11 @@ class FlightyApp(App[int]):
         screen does not exist yet, so the progress screen stays, showing the
         report; the review ticket shows its screen here (``show_screen``),
         or from a key on the progress screen that calls this."""
+
+    def open_export(self) -> None:
+        """Show the export screen (from the review). A new screen each time,
+        so it plans afresh from the decisions saved since."""
+        self.show_screen(ExportScreen(self.config))
 
     async def action_quit(self) -> None:
         request_quit = getattr(self.screen, "request_quit", None)

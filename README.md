@@ -216,6 +216,20 @@ model-server problem, once you have fixed it. The same rule as the commands
 keeps email on this machine: a non-local Ollama address is refused unless the
 config file allows it.
 
+The export screen (reached from the review) writes the import file for
+Flighty from the flights you kept, through the same code as `export
+--from-store`. It first shows what the export would do: how many flights go in
+the import file, how many must be added by hand and how many are not kept.
+Keys: `e` (or Enter) writes the files and shows the import file's full path
+and the steps for importing it into Flighty; `o` shows the file in Finder
+(macOS; elsewhere the screen says which folder it is in); space ticks the
+selected flight on the manual-add checklist (date, route, flight number,
+reason) once you have entered it in Flighty, saved at once and written to
+`manual-add.csv`; `b` goes back to the review, where you can change a decision
+and export again (each export writes a new import file named with the time);
+`q` quits. Nothing is sent to Flighty or anywhere else: the screen only writes
+local files.
+
 Outside a terminal (piped, or run from a script), the bare command prints the
 usage line and exits with status 2, as before.
 
@@ -616,13 +630,20 @@ Where `export` reads the flights from, in this order:
    import file as exporting the table `review` would write.
 3. **`--from-store`** forces the store even when a review table exists.
 
+`export --from-store --dry-run` prints what exporting from the store would do
+and writes nothing: how many flights would go in the import file and to the
+manual-add list and how many are not kept, then each flight for the import
+file and each manual-add flight with its reason and tick (`[x]`).
+
 The summary's `source of the export` line says which was used.
 
 The manual-add list has a last column, `done`: `yes` for a flight you have
 marked as entered in Flighty by hand, so you can work through the list over
 several sittings. Mark one with its date and flight number as the list shows
 them, or `--route ORIGIN DEST` for a flight without a number; `--undo` removes
-the mark. Run `export` again to see it in the list.
+the mark. A manual-add list an export has already written for the session
+is updated at once (`mark-added` prints `Manual-add list updated: PATH`); the
+import file is not touched.
 
 ```
 uv run flighty-exporter mark-added 2004-08-01 ZZ9

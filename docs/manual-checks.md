@@ -125,3 +125,79 @@ scratch.
     during a run. Text wraps inside the panels, nothing is cut off sideways,
     and the screen scrolls (mouse wheel, or the keyboard) to reach the panels
     below; the footer stays visible.
+
+## Export screen
+
+Start from a session whose run has finished (for example after the progress
+screen's checks), so the store holds flights. With `test.mbox` the export
+usually has several flights for the import file; to see the manual-add list,
+keep (in the review) a flight with no flight number, or one dated before 2006,
+or one to an airport the OpenFlights data does not know. Compare every
+screen with `uv run flighty-exporter export --from-store --dry-run`, which
+prints the same plan and writes nothing.
+
+1. **Open it.** From the review, move on to the export (once the review
+   screen exists; until then there is no way to reach it in the running
+   application). The status line says nothing is sent anywhere and to press
+   `e`. A Plan panel says how many flights will be exported, how many must
+   be added by hand and how many are not kept: the same three numbers as the
+   dry run's `flights to export`, `flights to add by hand` and `not kept`.
+   No file has been written yet (`ls openflights-backup-*.csv manual-add.csv`
+   shows nothing new). The footer shows `e Export`, `space Tick` (only when
+   there are manual-add flights), `b Back to review` and `q Quit`; not
+   `o Show in Finder`.
+2. **Checklist before exporting.** An "Add by hand in Flighty" panel lists
+   each manual-add flight with Done (`[ ]` or `[x]`), date, route
+   (`OSL → LIS`), flight number (`—` when there is none) and reason, the same
+   flights and reasons as the dry run's "Manual-add list would hold", and
+   "Ticked N of M" above it. With no manual-add flights it says "No flight
+   needs adding by hand: every kept flight goes in the import file." instead.
+3. **Export.** Press `e` (or Enter). The status line says "Writing the
+   files…", then "Export written". An "Import file" panel shows the import
+   file's full path, then "Press o to show it in Finder." (on macOS), then
+   the manual-add list's path. Both files exist at those paths; the import
+   file holds as many flights as the Plan said, and `manual-add.csv` holds
+   the checklist's flights in the same order with `done` = `yes` for the
+   ticked ones. An "Importing into Flighty" panel shows the steps: Settings,
+   Import Flights, OpenFlights; sending the file to the address Flighty gives
+   you; Flighty Pro for flights older than a year; manual-add flights entered
+   by hand with the two airports and the date; and the note that Flighty
+   documents support only for OpenFlights' own exports. `uv run
+   flighty-exporter session` lists the import file and the manual-add list
+   under "Files written".
+4. **Reveal.** Press `o`. Finder opens with the import file selected. (On a
+   system other than macOS, the panel instead says which folder the file is
+   in, and `o` shows a note with the full path.)
+5. **Tick and untick.** Move to a manual-add flight with the arrow keys and
+   press space: its Done cell becomes `[x]` and "Ticked" goes up by one. Open
+   `manual-add.csv` (or `cat` it): that flight's `done` column is `yes`
+   already, without exporting again, and the import file's modification
+   time has not changed. Press space again: `[ ]`, the count goes down, and
+   `done` is empty again in the file. `uv run flighty-exporter export
+   --from-store --dry-run` shows the same ticks.
+6. **Ticks persist.** Tick one flight, press `q` (the application closes,
+   exit status `0`), launch again and come back to the export screen: the
+   same flight is still ticked, before and after exporting again.
+7. **Back to the review and export again.** Press `b`: the review screen
+   comes back. Change a decision there (for example stop keeping one of the
+   exported flights), then go to the export again: the Plan shows the new
+   numbers. Wait for the clock to pass the minute and press `e`: a second
+   `openflights-backup-...csv` appears next to the first (an export in the
+   same minute as the previous one replaces that file), and `session` lists
+   both. `uv run flighty-exporter session --fresh-preview` would delete
+   both.
+8. **Reference data missing.** Point `[export] data_dir` at an empty folder
+   and `data_url` at an address that does not answer (for example
+   `http://127.0.0.1:9/data/`), launch and open the export. A red Problem
+   panel shows the same message `export` prints ("OpenFlights data file
+   airports.dat is not in … and could not be downloaded …") and that
+   nothing was exported; the footer offers `r Retry`, `b Back to review` and
+   `q Quit`, and `e` does nothing. Put the data back (or restore the config
+   and relaunch) and press `r`: the Plan appears.
+9. **Nothing kept.** Stop keeping every flight in the review, then open the
+   export. The status line says no flight is kept and there is nothing to
+   export; the Plan reads 0, 0 and the number not kept; the footer offers
+   only `b Back to review` and `q Quit`, and `e` writes nothing.
+10. **Nothing leaves the machine.** Throughout, nothing is sent to Flighty or
+    to any other service: with the network off, every step above except a
+    first download of the reference data works the same.
