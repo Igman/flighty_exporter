@@ -663,6 +663,34 @@ The rule for contributions: no real email, name, address, booking reference or
 flight ever goes into the repository, including test fixtures. Everything in
 the tests and the test mailbox is invented.
 
+### Layout
+
+The package `src/flighty_exporter/` is grouped by responsibility:
+
+| Folder | What lives there |
+|---|---|
+| `mail/` | Turning an mbox into readable messages: `reader` (MIME), `html_text`, `pdf_text`, and `markup` (machine-readable flight data). The only place that knows about MIME, HTML, PDFs or calendar files. |
+| `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, and `connection` (the shared HTTP opener and the errors that stop a pass). |
+| `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`. |
+| `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
+| `output/` | What the user gets at the end: `review`, `export`, and `openflights` (the import file format and reference data). |
+| top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, and `tables` (CSV writing and message dates shared by audit, review and export). |
+
+The dependency rule, enforced by `tests/test_layout.py`:
+
+- `flights` imports nothing else from the package.
+- `mail` imports nothing from `ollama`, `stages`, `output` or the top level,
+  except the record types from `flights.records` (the markup parser produces
+  a record).
+- `ollama` may import the message type (`mail.reader.Message`) and the record
+  types; nothing from `stages`, `output` or the top level.
+- `config`, `store`, `progress` and `tables` may import `flights` only.
+- `stages` and `output` may import from everything below them, but not from
+  each other; neither imports `cli`.
+- No module imports a name beginning with an underscore from another module,
+  and there are no import cycles. A new module must be given a group in the
+  test.
+
 ## Licence and credits
 
 MIT, see [LICENSE](LICENSE).

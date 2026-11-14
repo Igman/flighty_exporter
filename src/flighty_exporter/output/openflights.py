@@ -38,7 +38,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
-DEFAULT_DATA_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
 DATA_FILES = ("airports.dat", "airlines.dat")
 DOWNLOAD_TIMEOUT_SECONDS = 60
 
@@ -47,7 +46,6 @@ HEADER = (
     "Plane,Registration,Trip,Note,From_OID,To_OID,Airline_OID,Plane_OID"
 )
 FILE_NAME_FORMAT = "openflights-backup-%Y-%m-%d-%H%M.csv"
-FILE_GLOB = "openflights-backup-*.csv"
 
 _NULLS = ("", "\\N")
 
@@ -92,7 +90,7 @@ class OpenFlights:
         self._airlines = airlines
 
     @classmethod
-    def load(cls, data_dir: Path, data_url: str = DEFAULT_DATA_URL) -> "OpenFlights":
+    def load(cls, data_dir: Path, data_url: str) -> "OpenFlights":
         """Read the reference data from ``data_dir``, downloading any file
         that is missing. Raises ReferenceDataError if that fails."""
         paths = {name: _ensure_file(data_dir, name, data_url) for name in DATA_FILES}

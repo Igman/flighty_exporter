@@ -16,15 +16,18 @@ import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
-from . import audit, export, extract, review
-from .classify import format_summary, run_classify
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
-from .decision_client import DecisionClient, OllamaUnreachable
-from .extraction_client import ExtractionClient
-from .mailbox_reader import MailboxError
-from .openflights import ReferenceDataError
-from .preflight import PREFLIGHT_TIMEOUT, PreflightError, check_address, check_server
+from .mail.reader import MailboxError
+from .ollama.connection import OllamaUnreachable, PreflightError
+from .ollama.decision import DecisionClient
+from .ollama.extraction import ExtractionClient
+from .ollama.preflight import PREFLIGHT_TIMEOUT, check_address, check_server
+from .output import export, review
+from .output.openflights import ReferenceDataError
+from .stages import audit, extract
+from .stages.classify import format_summary, run_classify
 from .store import Store
 
 EXIT_OK = 0
@@ -97,6 +100,30 @@ def _pass_store(
                 Path(f"{store_path}{suffix}").unlink(missing_ok=True)
 
 
+def _extraction_client(config: Config) -> ExtractionClient:
+    """The extraction client extract and audit both use, so both send the same requests."""
+    return ExtractionClient(
+        config.ollama_address,
+        config.extraction_model,
+        timeout=config.ollama_timeout_seconds,
+        num_ctx=config.extract_num_ctx,
+        num_predict=config.extract_num_predict,
+        retries=config.extract_retries,
+        max_input_chars=config.extract_max_input_chars,
+    )
+
+
+def _pass_stopped(exc: OllamaUnreachable, format_partial: Callable[[Any], str], rerun: str) -> int:
+    """Report a model pass stopped by an unreachable server: the summary so
+    far (if the pass attached one), the error, and how to resume."""
+    summary = getattr(exc, "summary", None)
+    if summary is not None:
+        print(format_partial(summary))
+    print(f"error: {exc}", file=sys.stderr)
+    print(f"Progress so far is saved; rerun {rerun} to resume.", file=sys.stderr)
+    return EXIT_ERROR
+
+
 def cmd_classify(args: argparse.Namespace, config: Config) -> int:
     _check_address(args, config)
     mailbox_path = _mailbox_path(args, config)
@@ -114,12 +141,7 @@ def cmd_classify(args: argparse.Namespace, config: Config) -> int:
             print(format_summary(exc.summary, config, store))  # type: ignore[attr-defined]
             return EXIT_INTERRUPTED
         except OllamaUnreachable as exc:
-            summary = getattr(exc, "summary", None)
-            if summary is not None:
-                print(format_summary(summary, config, store))
-            print(f"error: {exc}", file=sys.stderr)
-            print("Progress so far is saved; rerun classify to resume.", file=sys.stderr)
-            return EXIT_ERROR
+            return _pass_stopped(exc, lambda partial: format_summary(partial, config, store), "classify")
         print(format_summary(summary, config, store))
     return EXIT_OK
 
@@ -127,15 +149,7 @@ def cmd_classify(args: argparse.Namespace, config: Config) -> int:
 def cmd_extract(args: argparse.Namespace, config: Config) -> int:
     _check_address(args, config)
     mailbox_path = _mailbox_path(args, config)
-    client = ExtractionClient(
-        config.ollama_address,
-        config.extraction_model,
-        timeout=config.ollama_timeout_seconds,
-        num_ctx=config.extract_num_ctx,
-        num_predict=config.extract_num_predict,
-        retries=config.extract_retries,
-        max_input_chars=config.extract_max_input_chars,
-    )
+    client = _extraction_client(config)
     with _pass_store(_store_path(args, config), client, "[models] extraction", "extract", config) as store:
         try:
             summary = extract.run_extract(config, mailbox_path, store, client)
@@ -143,12 +157,7 @@ def cmd_extract(args: argparse.Namespace, config: Config) -> int:
             print(extract.format_summary(exc.summary, config, store))  # type: ignore[attr-defined]
             return EXIT_INTERRUPTED
         except OllamaUnreachable as exc:
-            summary = getattr(exc, "summary", None)
-            if summary is not None:
-                print(extract.format_summary(summary, config, store))
-            print(f"error: {exc}", file=sys.stderr)
-            print("Progress so far is saved; rerun extract to resume.", file=sys.stderr)
-            return EXIT_ERROR
+            return _pass_stopped(exc, lambda partial: extract.format_summary(partial, config, store), "extract")
         print(extract.format_summary(summary, config, store))
     return EXIT_OK
 
@@ -165,15 +174,7 @@ def cmd_audit(args: argparse.Namespace, config: Config) -> int:
     if not store_path.is_file():
         print(f"error: store not found: {store_path}. Run classify first.", file=sys.stderr)
         return EXIT_ERROR
-    client = ExtractionClient(
-        config.ollama_address,
-        config.extraction_model,
-        timeout=config.ollama_timeout_seconds,
-        num_ctx=config.extract_num_ctx,
-        num_predict=config.extract_num_predict,
-        retries=config.extract_retries,
-        max_input_chars=config.extract_max_input_chars,
-    )
+    client = _extraction_client(config)
     with _pass_store(store_path, client, "[models] extraction", "audit", config) as store:
         try:
             result = audit.run_audit(config, mailbox_path, store, client, sample_size, seed)
@@ -181,12 +182,7 @@ def cmd_audit(args: argparse.Namespace, config: Config) -> int:
             print(audit.format_interrupted(exc.summary))  # type: ignore[attr-defined]
             return EXIT_INTERRUPTED
         except OllamaUnreachable as exc:
-            summary = getattr(exc, "summary", None)
-            if summary is not None:
-                print(audit.format_interrupted(summary).replace("Audit interrupted.", "Audit stopped.", 1))
-            print(f"error: {exc}", file=sys.stderr)
-            print("Progress so far is saved; rerun audit with the same seed to resume.", file=sys.stderr)
-            return EXIT_ERROR
+            return _pass_stopped(exc, audit.format_interrupted, "audit with the same seed")
         if not result.classified:
             print(f"error: {audit.no_population_message(result, config)}", file=sys.stderr)
             return EXIT_ERROR

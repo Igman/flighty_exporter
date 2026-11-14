@@ -52,11 +52,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .openflights import DEFAULT_DATA_URL
-from .passengers import names_someone
+from .flights.passengers import names_someone
 
 DEFAULT_CONFIG_NAME = "flighty_exporter.toml"
 DEFAULT_DATA_DIR = Path.home() / ".cache" / "flighty_exporter" / "openflights"
+DEFAULT_DATA_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/"
 
 
 class ConfigError(Exception):

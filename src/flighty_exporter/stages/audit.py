@@ -47,13 +47,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from .config import Config
+from ..config import Config
+from ..flights.records import ExtractionRecord
+from ..mail.reader import Mailbox, Message
+from ..ollama.extraction import ExtractionClient
+from ..progress import Progress
+from ..store import Store
+from ..tables import format_message_date, write_csv
 from .extract import ExtractSummary, extract_messages
-from .extraction_client import ExtractionClient, ExtractionRecord
-from .mailbox_reader import Mailbox, Message
-from .progress import Progress
-from .review import _message_date, write_csv
-from .store import Store
+from .summary import failure_lines
 
 BAND_EDGES = (0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
 
@@ -305,10 +307,7 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
         lines.append(f"  not in mailbox:       {ex.not_in_mailbox}")
     if ex.pdfs_not_read:
         lines.append(f"  PDFs not read:        {ex.pdfs_not_read}")
-    for identifier, reason in ex.failures[:20]:
-        lines.append(f"    failed {identifier}: {reason}")
-    if len(ex.failures) > 20:
-        lines.append(f"    ... and {len(ex.failures) - 20} more")
+    lines += failure_lines(ex.failures)
     if result.pdf_backfilled:
         lines.append(f"  PDF attachments noted from the mailbox for {result.pdf_backfilled} earlier-classified messages")
 
@@ -325,7 +324,7 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
     lines += ["", f"Sampled messages below the threshold that contained flight segments: {len(result.hits_below)}"]
     for hit in result.hits_below:
         sender, subject, raw_date = store.message_info(hit.message_id)
-        date, _ = _message_date(raw_date)
+        date, _ = format_message_date(raw_date)
         lines.append(f"  gate {hit.gate:.4g}  {date}  {sender}  \"{subject}\"")
         for segment in hit.record.segments:
             lines.append(
@@ -428,7 +427,8 @@ def format_interrupted(result: AuditResult) -> str:
     ex = result.extraction
     return "\n".join(
         [
-            "Audit interrupted. Rerun with the same seed to resume.",
+            # Interrupted by the user, or stopped by an unreachable server.
+            f"Audit {'interrupted' if result.interrupted else 'stopped'}. Rerun with the same seed to resume.",
             f"  sampled messages:     {result.sampled}",
             f"  already extracted (reused): {result.reused}",
             f"  to send to the extraction model: {result.to_extract}",

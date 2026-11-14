@@ -8,16 +8,14 @@ logs stay readable.
 from __future__ import annotations
 
 import sys
-import time
 from typing import TextIO
 
 
 class Progress:
-    def __init__(self, total: int, label: str, stream: TextIO | None = None, clock=time.monotonic):
+    def __init__(self, total: int, label: str, stream: TextIO | None = None):
         self.total = total
         self.label = label
         self.stream = stream or sys.stderr
-        self.clock = clock
         self.interactive = self.stream.isatty()
         self.done = 0
         self.work_done = 0

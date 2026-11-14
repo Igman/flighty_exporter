@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from flighty_exporter.config import DEFAULT_CONFIG_NAME, Config
-from flighty_exporter.export import MANUAL_ADD_NAME
-from flighty_exporter.openflights import FILE_NAME_FORMAT
+from flighty_exporter.output.export import MANUAL_ADD_NAME
+from flighty_exporter.output.openflights import FILE_NAME_FORMAT
 
 REPO = Path(__file__).resolve().parents[1]
 

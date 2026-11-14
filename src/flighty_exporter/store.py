@@ -35,11 +35,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .decision_client import Decision
-from .extraction_client import Extraction, ExtractionRecord
-from .markup import MARKUP_SOURCE
+from .flights.records import MARKUP_SOURCE, Decision, Extraction, ExtractionRecord
 
 SCHEMA_VERSION = 4
+
+# The passes that record failures, as named in the ``failures`` table.
+CLASSIFY_PASS = "classify"
+EXTRACT_PASS = "extract"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -164,7 +166,7 @@ class Store:
                     _now(),
                 ),
             )
-            self._db.execute("DELETE FROM failures WHERE message_id = ? AND pass = 'classify'", (message_id,))
+            self._db.execute("DELETE FROM failures WHERE message_id = ? AND pass = ?", (message_id, CLASSIFY_PASS))
 
     def gate_probabilities(self, model: str) -> list[float]:
         rows = self._db.execute("SELECT gate_probability FROM classifications WHERE model = ?", (model,))
@@ -200,10 +202,10 @@ class Store:
         """Messages whose classification failed and that have neither a
         classification by ``decision_model`` nor a markup record."""
         row = self._db.execute(
-            "SELECT COUNT(*) FROM failures WHERE pass = 'classify' "
+            "SELECT COUNT(*) FROM failures WHERE pass = ? "
             "AND message_id NOT IN (SELECT message_id FROM classifications WHERE model = ?) "
             "AND message_id NOT IN (SELECT message_id FROM extractions WHERE model = ?)",
-            (decision_model, MARKUP_SOURCE),
+            (CLASSIFY_PASS, decision_model, MARKUP_SOURCE),
         ).fetchone()
         return row[0]
 
@@ -257,7 +259,7 @@ class Store:
                     int(extraction.input_truncated),
                 ),
             )
-            self._db.execute("DELETE FROM failures WHERE message_id = ? AND pass = 'extract'", (message_id,))
+            self._db.execute("DELETE FROM failures WHERE message_id = ? AND pass = ?", (message_id, EXTRACT_PASS))
 
     def truncated_extraction_ids(self, model: str) -> set[str]:
         """Messages whose extraction input was cut at the character budget."""

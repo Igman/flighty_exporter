@@ -32,15 +32,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from ..tables import write_csv
 from . import openflights as import_format
-from .review import write_csv
 
 MANUAL_ADD_NAME = "manual-add.csv"
 MANUAL_ADD_COLUMNS = (
     "date", "origin", "destination", "flight_number", "reason", "message_date", "message_subject",
 )
 REQUIRED_COLUMNS = ("keep", "date", "flight_number", "origin", "destination")
-OPTIONAL_COLUMNS = ("message_date", "message_subject")
 
 KEEP_YES = frozenset({"yes", "y", "true", "1", "x"})
 KEEP_NO = frozenset({"no", "n", "false", "0", ""})

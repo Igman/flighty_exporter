@@ -19,14 +19,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from .config import Config
-from .decision_client import EMAIL_TYPES, DecisionClient, DecisionError
-from .mailbox_reader import Mailbox, Message, Skipped, Unreadable
-from .markup import parse_markup
-from .progress import Progress
-from .store import Store
+from ..config import Config
+from ..mail.markup import parse_markup
+from ..mail.reader import Mailbox, Message, Skipped, Unreadable
+from ..ollama.decision import EMAIL_TYPES, DecisionClient, DecisionError
+from ..progress import Progress
+from ..store import CLASSIFY_PASS, Store
+from .summary import failure_lines
 
-PASS_NAME = "classify"
+PASS_NAME = CLASSIFY_PASS
 GATE_BANDS = (0.5, 0.2, 0.05)
 
 
@@ -92,21 +93,23 @@ def run_classify(
     return summary
 
 
+def _record_message(message: Message, store: Store) -> None:
+    store.record_message(
+        message.identifier, message.sender, message.subject, message.date, message.labels, message.has_pdf_attachment
+    )
+
+
 def _resolve_from_markup(message: Message, store: Store) -> bool:
     record = parse_markup(message.html_parts, message.calendar_texts)
     if record is None:
         return False
-    store.record_message(
-        message.identifier, message.sender, message.subject, message.date, message.labels, message.has_pdf_attachment
-    )
+    _record_message(message, store)
     store.save_markup(message.identifier, record)
     return True
 
 
 def _classify_one(message: Message, store: Store, client: DecisionClient, summary: ClassifySummary) -> None:
-    store.record_message(
-        message.identifier, message.sender, message.subject, message.date, message.labels, message.has_pdf_attachment
-    )
+    _record_message(message, store)
     try:
         decision = client.decide(message)
     except DecisionError as exc:
@@ -131,10 +134,7 @@ def format_summary(summary: ClassifySummary, config: Config, store: Store) -> st
         f"  skipped:              {summary.skipped}",
         f"  failed:               {summary.failed}",
     ]
-    for identifier, reason in summary.failures[:20]:
-        lines.append(f"    failed {identifier}: {reason}")
-    if len(summary.failures) > 20:
-        lines.append(f"    ... and {len(summary.failures) - 20} more")
+    lines += failure_lines(summary.failures)
 
     gates = store.gate_probabilities(config.decision_model)
     types = store.email_type_counts(config.decision_model)

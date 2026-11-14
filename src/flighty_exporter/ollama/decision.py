@@ -18,15 +18,12 @@ from __future__ import annotations
 import json
 import math
 import re
-import socket
 import urllib.error
-import urllib.request
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
-from .mailbox_reader import Message
-from .preflight import OLLAMA_OPENER
+from ..flights.records import Decision
+from ..mail.reader import Message
+from .connection import OllamaClient, RequestTimedOut
 
 ENDPOINT = "/v1/systemone"
 
@@ -61,15 +58,6 @@ EMAIL_TYPES: dict[str, str] = {
 }
 
 
-@dataclass(frozen=True)
-class Decision:
-    gate_probability: float
-    email_type: str
-    type_probabilities: dict[str, float]
-    type_confidence: float | None
-    model: str
-
-
 class DecisionError(Exception):
     """The request for one message failed; the run can continue."""
 
@@ -78,11 +66,7 @@ class PromptTooLarge(DecisionError):
     """The server rejected the prompt as over its token or size limit."""
 
 
-class OllamaUnreachable(Exception):
-    """The server could not be reached at all; the run should stop."""
-
-
-class DecisionClient:
+class DecisionClient(OllamaClient):
     def __init__(
         self,
         address: str,
@@ -90,11 +74,7 @@ class DecisionClient:
         timeout: float = 300.0,
         max_body_chars: int = DEFAULT_MAX_BODY_CHARS,
     ):
-        self.address = address.rstrip("/")
-        self.model = model
-        # Called once, just before the first request (the preflight check).
-        self.before_first_request: Callable[[], None] | None = None
-        self.timeout = timeout
+        super().__init__(address, model, timeout)
         self.max_body_chars = max_body_chars
 
     def decide(self, message: Message) -> Decision:
@@ -116,33 +96,17 @@ class DecisionClient:
         raise AssertionError("unreachable")
 
     def _post(self, payload: dict[str, Any]) -> Any:
-        if self.before_first_request is not None:
-            self.before_first_request()
-            self.before_first_request = None
-        request = urllib.request.Request(
-            self.address + ENDPOINT,
-            # Non-ASCII text as UTF-8, not \u escapes: smaller against the 64 KiB limit.
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        # Non-ASCII text as UTF-8, not \u escapes: smaller against the 64 KiB limit.
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         try:
-            with OLLAMA_OPENER.open(request, timeout=self.timeout) as response:
-                raw = response.read()
+            raw = self.send(ENDPOINT, body)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
             if exc.code == 413 or (exc.code == 400 and _TOO_MANY_TOKENS.search(detail)):
                 raise PromptTooLarge(f"HTTP {exc.code} from decision endpoint: {detail}") from exc
             raise DecisionError(f"HTTP {exc.code} from decision endpoint: {detail}") from exc
-        except (TimeoutError, socket.timeout) as exc:
+        except RequestTimedOut as exc:
             raise DecisionError(f"decision request timed out after {self.timeout:g}s") from exc
-        except (urllib.error.URLError, ConnectionError) as exc:
-            reason = getattr(exc, "reason", exc)
-            if isinstance(reason, (TimeoutError, socket.timeout)):
-                raise DecisionError(f"decision request timed out after {self.timeout:g}s") from exc
-            raise OllamaUnreachable(
-                f"cannot reach Ollama at {self.address}: {reason}. Is `ollama serve` running?"
-            ) from exc
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
