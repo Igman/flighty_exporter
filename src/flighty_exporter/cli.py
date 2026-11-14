@@ -6,6 +6,9 @@ classify, extract and review in one go through the run engine (see
 ``engine.pipeline``) and prints its events. ``mark-added`` ticks a flight on
 the manual-add list in the store, and ``sources`` lists the saved text of
 each flight's source emails.
+``session`` describes the session in the store and, with
+``--fresh-preview``, what ``run --fresh`` would delete (see
+``engine.session``).
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
