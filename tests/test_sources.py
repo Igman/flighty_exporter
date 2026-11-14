@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import FLIGHT_BODY, email, text_pdf, write_mbox
+from test_decisions import DISCARDED, GOOD, OLD, OTHER, edit_review, export, review, run_passes
 from test_extract import CONNECTING_RECORD, FLIGHT_RECORD, FLIGHT_SUBJECT
 from test_markup import flight_reservation, json_ld_html, markup_email
 
@@ -213,3 +214,47 @@ def test_sources_without_a_store_is_a_clear_error(workspace):
 
     assert result.returncode == 1
     assert "store not found" in result.stderr
+
+
+# -- with review decisions ----------------------------------------------------------------------
+
+
+def decision_rows(workspace) -> list[tuple]:
+    with sqlite3.connect(workspace.root / "flighty_exporter.db") as db:
+        return sorted(db.execute("SELECT * FROM review_decisions"))
+
+
+def test_sources_shows_a_corrected_flight_under_its_corrected_values_with_its_saved_text(workspace):
+    run_passes(workspace, [GOOD, OLD])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-05-12 ZZ1234"].update(flight_number="ZZ1235", origin="AMS"))
+    export(workspace)
+
+    result = run_ok(workspace, "sources")
+
+    flight_lines = [line for line in result.stdout.splitlines() if line and not line.startswith(" ")]
+    assert flight_lines == ["2004-08-01  ZZ9  OSL-LIS", "2025-05-12  ZZ1235  AMS-OSL"]
+    one = run_ok(workspace, "sources", "--flight", "2025-05-12", "ZZ1235").stdout
+    assert one.splitlines()[:2] == ["2025-05-12  ZZ1235  AMS-OSL", f"  2025-03-01 10:00  {GOOD.subject}"]
+    assert saved_text(one)[1:4] == [f"Subject: {GOOD.subject}", "Date: Sat, 01 Mar 2025 10:00:00 +0000", ""]
+    assert "Invented email." in saved_text(one)
+    # The values it showed before the correction no longer name it.
+    before = workspace.run("sources", "--flight", "2025-05-12", "ZZ1234")
+    assert before.returncode == 1 and "no flight on 2025-05-12" in before.stderr
+
+
+def test_sources_neither_discards_nor_alters_decisions(workspace):
+    run_passes(workspace, [GOOD, OTHER])
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no", destination="BOS"))
+    export(workspace)
+    # A decision whose flight is not produced: review and export would discard it.
+    assert workspace.run("mark-added", "2001-01-01", "ZZ1").returncode == 0
+    saved = decision_rows(workspace)
+    assert len(saved) == 2
+
+    run_ok(workspace, "sources")
+    run_ok(workspace, "sources", "--flight", "2025-06-01", "QQ410", "--no-text")
+
+    assert decision_rows(workspace) == saved
+    assert review(workspace, "--force").stdout.count(f"{DISCARDED}: 1") == 1

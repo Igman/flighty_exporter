@@ -1,5 +1,5 @@
 """Review decisions kept in the store, driven through the command line
-(classify, extract, review, export, mark-added) against a fake Ollama and the
+(classify, extract, review, export, mark-added, sources) against a fake Ollama and the
 tiny OpenFlights fixture data. A decision is the user's keep choice or a
 correction to a flight's date, flight number or airports; the review table and
 the export both read them. Assertions are on the review CSV, the import file,
@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import email, write_mbox
 from test_consolidation import Mail, record, seg
@@ -381,3 +382,54 @@ def test_a_store_from_before_decisions_still_works(workspace):
     assert export(workspace).count(RECORDED) == 1
     (workspace.root / REVIEW).unlink()
     assert export(workspace).count("flights exported") == 1
+
+
+# Stores as each earlier version left them: (what to remove, user_version).
+# Two lines of development both numbered their change 5, so the number alone
+# does not say which tables and columns a store has.
+EARLIER_STORES = {
+    "4": (("review_decisions", "message_texts", "mbox_offset"), 4),
+    "5 with decisions": (("message_texts", "mbox_offset"), 5),
+    "5 with positions": (("review_decisions", "message_texts"), 5),
+    "6 with positions and text": (("review_decisions",), 6),
+}
+
+
+@pytest.mark.parametrize("earlier", EARLIER_STORES)
+def test_a_store_from_each_earlier_version_works_with_decisions_positions_and_saved_text(workspace, earlier):
+    removed, version = EARLIER_STORES[earlier]
+    run_passes(workspace, [GOOD, OTHER])
+    db_path = workspace.root / "flighty_exporter.db"
+    with sqlite3.connect(db_path) as db:
+        for name in removed:
+            if name == "mbox_offset":
+                db.execute("ALTER TABLE messages DROP COLUMN mbox_offset")
+            else:
+                db.execute(f"DROP TABLE {name}")
+        db.execute(f"PRAGMA user_version={version}")
+
+    # Decisions: recorded from an edited table, then applied by sources.
+    review(workspace)
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(flight_number="QQ411"))
+    assert export(workspace).count(RECORDED) == 1
+    listing = workspace.run("sources", "--flight", "2025-06-01", "QQ411")
+    assert listing.returncode == 0, listing.stderr
+    text_kept = "message_texts" not in removed
+    assert ("Invented email." in listing.stdout) == text_kept
+    assert ("source text unavailable" in listing.stdout) == (not text_kept)
+
+    # Positions and saved text: extracting again (another model) finds the
+    # messages, scanning only if positions were never recorded, and saves text.
+    workspace.write_config(f'[ollama]\naddress = "{workspace.ollama.url}"\n\n[models]\nextraction = "other-extractor"\n')
+    again = workspace.run("extract", "--mailbox", str(workspace.root / "mail.mbox"))
+    assert again.returncode == 0, again.stderr
+    assert ("locating messages" in again.stderr) == ("mbox_offset" in removed)
+    assert again.count("not in mailbox") == 0
+    listing = workspace.run("sources", "--flight", "2025-06-01", "QQ411")
+    assert listing.stdout.splitlines()[0] == "2025-06-01  QQ411  AMS-KEF"
+    assert "Invented email." in listing.stdout and "source text unavailable" not in listing.stdout
+
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert db.execute("SELECT count(*) FROM messages WHERE mbox_offset IS NULL").fetchone()[0] == 0
+        assert len(db.execute("SELECT * FROM review_decisions").fetchall()) == 1
