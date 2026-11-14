@@ -34,6 +34,13 @@ Two sources (the command line picks one, see ``cli.cmd_export``):
 
 The manual-add list's last column, done, shows the store's manual-add tick
 for the flight (set by ``mark-added``).
+
+For the export screen and ``export --dry-run``: ``plan_store_export`` says
+what ``run_store_export`` would write without writing anything (the latter
+writes exactly that plan); ``refresh_manual_add`` rewrites a written
+manual-add list with the current ticks only; ``reveal`` shows a file in the
+system file manager (macOS only); ``FLIGHTY_IMPORT_STEPS`` is the verified
+import procedure.
 """
 
 from __future__ import annotations
@@ -41,6 +48,8 @@ from __future__ import annotations
 import csv
 import io
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -564,3 +573,38 @@ def format_plan(plan: ExportPlan) -> str:
 
 def _flight_line(day: date, flight_number: str, origin: str, destination: str) -> str:
     return f"{day.isoformat()}  {(flight_number or '-').ljust(6)}  {origin}-{destination}"
+
+
+# The steps for importing into Flighty, saying only what was verified (see
+# the README's "Importing into Flighty"); shown on the export screen.
+FLIGHTY_IMPORT_STEPS = """\
+To import the file into Flighty:
+1. In Flighty, go to Settings, Import Flights, and choose OpenFlights.
+2. Flighty's import works by sending the file to an address it gives you: send the import file to that address.
+3. Flights older than a year need Flighty Pro.
+4. Enter each flight on the manual-add list by hand in Flighty: it needs the two airports and the date.
+
+A file generated this way was accepted in November 2026, and a flight Flighty already had was not imported \
+twice. Flighty documents support only for files exported by OpenFlights itself, so this could stop working."""
+
+
+def reveal_command(path: Path, platform: str = sys.platform) -> list[str] | None:
+    """The command that shows ``path`` selected in the system file manager,
+    or None where that is not supported (only macOS is: ``open -R``)."""
+    if platform == "darwin":
+        return ["open", "-R", str(path)]
+    return None
+
+
+def reveal(path: Path) -> bool:
+    """Show ``path`` in the system file manager. False if this system is not
+    supported or the command could not be run: the caller shows the path."""
+    command = reveal_command(path)
+    if command is None:
+        return False
+    try:
+        completed = subprocess.run(command, check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0

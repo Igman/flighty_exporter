@@ -358,17 +358,10 @@ def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
     origin, destination = args.route or ("", "")
     with Store(store_path) as store:
         key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
-        store.set_added(key, not args.undo)
-        session.touch(store)
         # A manual-add list an export already wrote follows the tick at once.
-        refreshed = []
-        for path in session.written(store, session.MANUAL_ADD_LIST):
-            try:
-                export.refresh_manual_add(store, path)
-            except export.ExportError as exc:
-                _warn(f"warning: {exc}")
-            else:
-                refreshed.append(path)
+        refreshed, problems = session.tick_manual_add(store, key, not args.undo)
+    for problem in problems:
+        _warn(f"warning: {problem}")
     if args.undo:
         print(f"Flight {key} is no longer marked as added in Flighty.")
     else:

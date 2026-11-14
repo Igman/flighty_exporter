@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
+from ..output.export import ExportError, refresh_manual_add
 from ..output.review import build_flight_list
 from ..store import Store
 from ..threshold import effective_threshold
@@ -163,6 +164,24 @@ def record_export(store: Store, import_path: Path | None, manual_add_path: Path 
 def written(store: Store, kind: str) -> list[Path]:
     """The files of ``kind`` recorded as written for the session that still exist."""
     return [path for recorded, path, _ in store.written_files() if recorded == kind and path.is_file()]
+
+
+def tick_manual_add(store: Store, flight_key: str, added: bool) -> tuple[list[Path], list[str]]:
+    """Tick (or untick) a flight on the manual-add list, then bring every
+    manual-add list an export wrote for the session in step with the ticks
+    (``export.refresh_manual_add``; the import files are not touched).
+    Returns (lists refreshed, problems with lists that could not be read)."""
+    store.set_added(flight_key, added)
+    touch(store)
+    refreshed, problems = [], []
+    for path in written(store, MANUAL_ADD_LIST):
+        try:
+            refresh_manual_add(store, path)
+        except ExportError as exc:
+            problems.append(str(exc))
+        else:
+            refreshed.append(path)
+    return refreshed, problems
 
 
 # -- describing ------------------------------------------------------------------------
