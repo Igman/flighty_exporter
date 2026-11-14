@@ -100,8 +100,10 @@ scratch.
    relaunch) and press `r`.
 11. **Non-local address.** Set `[ollama] address = "http://192.0.2.10:11434"`
     and launch. The Problem panel shows the existing refusal message (email
-    content would leave this machine), no stage starts, and the footer offers
-    only `q Quit` (no retry: change the config and launch again). With
+    content would leave this machine), followed by a line saying that in the
+    application `--allow-remote` does not apply and what to set in the config
+    file instead. No stage starts, and the footer offers only `q Quit` (no
+    retry: change the config and launch again). With
     `allow_remote = true` under `[ollama]`, the run is attempted and the
     warning appears in the Notices panel instead.
 12. **Finish and report.** Let a run complete. Every stage reads "done" or

@@ -87,7 +87,12 @@ STATUS = {
 FINAL_COUNTS = (ClassifySummary, ExtractSummary, AuditResult, IncludeSummary)
 
 RETRY_HINT = "Press r to retry once it is fixed, or q to quit."
-ADDRESS_HINT = "Change [ollama] address in the config file, then start flighty-exporter again. Press q to quit."
+# Under the engine's message, which is the commands' and mentions their --allow-remote option.
+ADDRESS_HINT = (
+    "In the application, --allow-remote does not apply: point [ollama] address at a server on this "
+    "machine, or set `allow_remote = true` under [ollama] in the config file, then start "
+    "flighty-exporter again. Press q to quit."
+)
 REVIEW_NEXT = "Reviewing the flights will happen in the next screen once it exists; for now, press q to quit."
 
 def human_duration(seconds: float) -> str:
