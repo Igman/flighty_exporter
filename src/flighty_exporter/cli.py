@@ -34,7 +34,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .config import DEFAULT_CONFIG_NAME, QUICK, THOROUGHNESS, Config, ConfigError, load_config
 from .engine import session
 from .engine import setup
 from .engine.readiness import check_readiness, format_readiness
@@ -45,7 +45,7 @@ from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, r
 from .engine.report import format_report, format_totals, run_next_step
 from .engine.events import AUDIT, INCLUDE, STOPPED
 from .engine.thorough import format_include
-from .flights.decisions import InvalidCorrection, is_date, resolve_key
+from .flights.decisions import CORRECTABLE, InvalidCorrection, InvalidSetting, is_date, parse_settings, resolve_key
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
@@ -85,6 +85,12 @@ def _store_path(args: argparse.Namespace, config: Config) -> Path:
 
 def _warn(text: str) -> None:
     print(text, file=sys.stderr)
+
+
+def _store_not_found(store_path: Path, first: str = "classify and extract") -> int:
+    """Say that the store does not exist and which commands make it; the exit status."""
+    print(f"error: store not found: {store_path}. Run {first} first.", file=sys.stderr)
+    return EXIT_ERROR
 
 
 def _check_address(args: argparse.Namespace, config: Config) -> None:
@@ -160,8 +166,7 @@ def cmd_audit(args: argparse.Namespace, config: Config) -> int:
     if sample_size < 1:
         raise UsageError("--sample-size must be at least 1")
     if not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path, "classify")
     client = _extraction_client(config)
     with _pass_store(store_path, client, "[models] extraction", "audit", config) as store:
         session.begin(store, config, mailbox_path, config.thoroughness)
@@ -186,8 +191,7 @@ def cmd_review(args: argparse.Namespace, config: Config) -> int:
     failures_path = Path(args.failures).expanduser() if args.failures else config.failures_output
     store_path = _store_path(args, config)
     if not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path)
     with Store(store_path) as store:
         try:
             summary = review.write_review(config, store, review_path, failures_path, args.force)
@@ -216,8 +220,7 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
     if args.from_store and args.review:
         raise UsageError("--from-store exports from the store and ignores the review table; do not pass --review too")
     if args.from_store and not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path)
     if args.dry_run and not args.from_store:
         raise UsageError("--dry-run shows what exporting from the store would do; pass --from-store with it")
     try:
@@ -352,8 +355,7 @@ def cmd_mark_added(args: argparse.Namespace, config: Config) -> int:
         raise UsageError("give the flight number, or --route ORIGIN DEST for a flight without one (not both)")
     store_path = _store_path(args, config)
     if not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path)
     origin, destination = args.route or ("", "")
     with Store(store_path) as store:
         key = resolve_key(store.review_decisions(), args.date, args.flight_number or "", origin, destination)
@@ -390,8 +392,7 @@ COMMANDS["mark-added"] = (
 def cmd_sources(args: argparse.Namespace, config: Config) -> int:
     store_path = _store_path(args, config)
     if not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path)
     choice = tuple(args.flight) if args.flight else None
     with Store(store_path) as store:
         try:
@@ -426,8 +427,7 @@ def cmd_flights(args: argparse.Namespace, config: Config) -> int:
         raise UsageError(f"--year {args.year!r} is not a year (YYYY)")
     store_path = _store_path(args, config)
     if not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path)
     filters = flight_view.Filters(flagged=args.flagged, not_kept=args.not_kept, year=args.year)
     with Store(store_path) as store:
         flight_list = review.build_flight_list(config, store)
@@ -450,24 +450,16 @@ COMMANDS["flights"] = (
 )
 
 
-CORRECTABLE = ("date", "flight_number", "origin", "destination")
-
-
 def cmd_decide(args: argparse.Namespace, config: Config) -> int:
     if bool(args.flight_number) == bool(args.route):
         raise UsageError("give the flight number, or --route ORIGIN DEST for a flight without one (not both)")
-    typed: dict[str, str] = {}
-    for item in args.set or ():
-        name, sep, value = item.partition("=")
-        if not sep or name.strip() not in CORRECTABLE:
-            raise UsageError(
-                f"--set {item!r}: give field=value, the field being date, flight_number, origin or destination"
-            )
-        typed[name.strip()] = value
+    try:
+        typed = parse_settings(args.set or [])
+    except InvalidSetting as exc:
+        raise UsageError(str(exc)) from exc
     store_path = _store_path(args, config)
     if not store_path.is_file():
-        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
-        return EXIT_ERROR
+        return _store_not_found(store_path)
     origin, destination = args.route or ("", "")
     with Store(store_path) as store:
         reviewer = decide.Reviewer.load(config, store)
@@ -630,7 +622,7 @@ def _run_arguments(parser: argparse.ArgumentParser) -> None:
     _allow_remote_argument(parser)
     parser.add_argument(
         "--thoroughness",
-        choices=("quick", "thorough"),
+        choices=THOROUGHNESS,
         help="how hard to look for flight emails the first filter missed (overrides [run] thoroughness); "
         "quick runs no audit; thorough audits after extract and, within [audit] auto_include_budget, lowers the "
         "threshold for this session",
@@ -726,8 +718,8 @@ def _setup_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--thoroughness",
-        choices=("quick", "thorough"),
-        default="quick",
+        choices=THOROUGHNESS,
+        default=QUICK,
         help="quick (the default) runs no audit; thorough also checks for missed flight emails after extract",
     )
     parser.add_argument(
@@ -781,13 +773,9 @@ def cmd_pull_models(args: argparse.Namespace, config: Config) -> int:
         except KeyboardInterrupt:
             print(f"Interrupted. {KEPT_PARTIAL}", file=sys.stderr)
             return EXIT_INTERRUPTED
-    after = check_readiness(config, allow_remote=args.allow_remote, command="pull-models")
+    # Each pull has checked that the server now lists its model.
     for model in readiness.missing:
-        if any(m.name == model.name and m.present for m in after.models):
-            print(f"{model.name} is now on the Ollama server.")
-        else:
-            print(f"error: the server reported {model.name} as pulled but does not list it.", file=sys.stderr)
-            return EXIT_ERROR
+        print(f"{model.name} is now on the Ollama server.")
     return EXIT_OK
 
 

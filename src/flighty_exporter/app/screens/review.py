@@ -38,7 +38,7 @@ from textual.widgets import DataTable, Footer, Input, Label, Static
 from ...config import Config
 from ...engine import session
 from ...engine.report import RunReport
-from ...flights.decisions import InvalidCorrection, ReviewedFlight
+from ...flights.decisions import CORRECTABLE, InvalidCorrection, ReviewedFlight
 from ...output import flight_view
 from ...output.decide import Reviewer
 from ...output import sources
@@ -363,8 +363,7 @@ class CorrectionScreen(ModalScreen[None]):
     CorrectionScreen #message { color: $error; margin-top: 1; }
     """
 
-    FIELDS = (("date", "Date (YYYY-MM-DD)"), ("flight_number", "Flight number"), ("origin", "Origin"),
-              ("destination", "Destination"))
+    FIELDS = tuple(zip(CORRECTABLE, ("Date (YYYY-MM-DD)", "Flight number", "Origin", "Destination")))
 
     def __init__(self, reviewed: ReviewedFlight, save: Callable[[tuple[str, str, str, str]], str | None]) -> None:
         super().__init__()

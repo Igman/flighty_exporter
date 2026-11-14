@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..config import THOROUGH
 from ..flights.decisions import ReviewedFlight
 from ..flights.validate import is_blocking
 from .export import manual_add_reason
@@ -234,7 +235,7 @@ def empty_advice(thoroughness: str | None) -> list[str]:
         NO_FLIGHTS,
         "Check the emails that could not be read: their flights must be looked up and added in Flighty by hand.",
     ]
-    if thoroughness != "thorough":
+    if thoroughness != THOROUGH:
         lines.append(
             "This was a Quick run. A Thorough run also checks a sample of the emails the first filter "
             "left out (set `thoroughness = \"thorough\"` under [run] and start fresh)."

@@ -94,6 +94,18 @@ def test_a_pull_error_is_reported_and_exits_non_zero(workspace):
     assert "Missing on the Ollama server" in workspace.run("pull-models").stdout
 
 
+def test_a_pull_reported_as_done_that_leaves_the_model_missing_is_an_error(workspace):
+    # The application's download goes through the same pull, so it gets this check too.
+    workspace.ollama.models = list(MISSING_DECISION)
+    workspace.ollama.pull_lists = False
+
+    result = workspace.run("pull-models", "--yes")
+
+    assert result.returncode == 1
+    assert "error: the server reported nimble as pulled but does not list it." in result.stderr
+    assert "now on the Ollama server" not in result.stdout
+
+
 def test_a_refused_pull_request_is_reported(workspace):
     workspace.ollama.models = list(MISSING_DECISION)
     workspace.ollama.pull_status = 500

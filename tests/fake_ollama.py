@@ -125,6 +125,8 @@ class FakeOllama:
     pull_status: int = 200
     pull_delay: float = 0.0
     pull_total: int = 2000
+    # False: a pull reports success without the model appearing in the list.
+    pull_lists: bool = True
 
     def __post_init__(self) -> None:
         self.routes: dict[tuple[str, str], Callable[[Any], tuple[int, str]]] = {
@@ -298,7 +300,7 @@ class FakeOllama:
         yield line({**layer, "completed": total})
         for status in ("verifying sha256 digest", "writing manifest", "removing any unused layers"):
             yield line({"status": status})
-        if model not in self.models:
+        if model not in self.models and self.pull_lists:
             self.models.append(model)
         yield line({"status": "success"})
 

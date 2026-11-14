@@ -59,8 +59,8 @@ from pathlib import Path
 
 from ..config import Config
 from ..flights.decisions import (
-    Corrections, InvalidCorrection, ReviewDecision, ReviewedFlight, is_date, keep_override, resolve_key,
-    typed_corrections,
+    CORRECTABLE, Corrections, InvalidCorrection, ReviewDecision, ReviewedFlight, is_date, keep_override,
+    resolve_key, typed_corrections,
 )
 from ..flights.validate import normalise_airport, normalise_flight_number
 from ..store import Store
@@ -275,7 +275,7 @@ def record_decisions(
         found = typed_corrections(reviewed.original, *values[1:])
         existing = reviewed.decision or ReviewDecision()
         store.save_corrections(key, *(
-            getattr(found if name in changed else existing, name) for name in _CORRECTED
+            getattr(found if name in changed else existing, name) for name in CORRECTABLE
         ))
     if edits:
         flight_list = build_flight_list(config, store)
@@ -304,7 +304,6 @@ def record_decisions(
 
 # A row's keep, date, flight number, origin and destination, normalised.
 _Values = tuple[bool, str, str, str, str]
-_CORRECTED = ("date", "flight_number", "origin", "destination")
 
 
 def _row_values(reviewed: ReviewedFlight, cells: dict[str, str]) -> _Values | None:

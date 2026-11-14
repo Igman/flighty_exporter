@@ -28,8 +28,8 @@ import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .connection import OLLAMA_OPENER
-from .preflight import check_address, model_key, unreachable_message
+from .connection import OLLAMA_OPENER, PreflightError
+from .preflight import check_address, is_pulled, model_key, pulled_models, unreachable_message
 
 SUCCESS = "success"
 
@@ -88,8 +88,9 @@ def pull_model(
     Refuses a non-local address (``PreflightError``, before any request)
     unless ``allow_remote``. Raises ``PullFailed`` when the server cannot be
     reached, reports an error, sends something that is not a progress line,
-    goes quiet for ``timeout`` seconds, or ends the stream before success.
-    ``command`` is what the unreachable message tells the user to rerun."""
+    goes quiet for ``timeout`` seconds, or ends the stream before success,
+    and when, after success, the server does not list the model. ``command``
+    is what the unreachable message tells the user to rerun."""
     check_address(address, allow_remote)
     address = address.rstrip("/")
     request = urllib.request.Request(
@@ -114,6 +115,8 @@ def pull_model(
                 if not line:
                     continue
                 progress = _progress(line, address, model)
+                if progress.finished:
+                    _check_listed(address, model, command)
                 yield progress
                 if progress.finished:
                     return
@@ -127,6 +130,16 @@ def pull_model(
     raise PullFailed(
         f"the Ollama server at {address} stopped answering before {model} finished downloading. {KEPT_PARTIAL}"
     )
+
+
+def _check_listed(address: str, model: str, command: str) -> None:
+    """Raise ``PullFailed`` unless the server now lists ``model``."""
+    try:
+        listed = is_pulled(model, pulled_models(address, command))
+    except PreflightError as exc:
+        raise PullFailed(str(exc)) from exc
+    if not listed:
+        raise PullFailed(f"the server reported {model} as pulled but does not list it.")
 
 
 def _progress(line: bytes, address: str, model: str) -> PullProgress:

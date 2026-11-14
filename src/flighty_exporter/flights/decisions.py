@@ -43,6 +43,9 @@ _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # How a flight without a flight number is named where its number would be shown.
 NO_FLIGHT_NUMBER = "(no flight number)"
 
+# The fields a correction can change, in the order they are shown and typed.
+CORRECTABLE = ("date", "flight_number", "origin", "destination")
+
 
 @dataclass(frozen=True)
 class ReviewDecision:
@@ -131,6 +134,24 @@ def typed_corrections(original: Segment, day: str, flight_number: str, origin: s
         origin=origin if origin != original.origin else None,
         destination=destination if destination != original.destination else None,
     )
+
+
+class InvalidSetting(ValueError):
+    """A typed ``field=value`` that does not name a correctable field."""
+
+
+def parse_settings(items: list[str]) -> dict[str, str]:
+    """Typed ``field=value`` corrections (``decide --set``) by field name;
+    raises ``InvalidSetting`` for one without ``=`` or naming another field."""
+    typed: dict[str, str] = {}
+    for item in items:
+        name, sep, value = item.partition("=")
+        if not sep or name.strip() not in CORRECTABLE:
+            raise InvalidSetting(
+                f"--set {item!r}: give field=value, the field being date, flight_number, origin or destination"
+            )
+        typed[name.strip()] = value
+    return typed
 
 
 def keep_override(keep: bool, preset_keep: bool) -> bool | None:
