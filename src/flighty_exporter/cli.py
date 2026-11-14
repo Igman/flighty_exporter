@@ -203,20 +203,21 @@ def cmd_review(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_export(args: argparse.Namespace, config: Config) -> int:
-    """Three cases: a review table given or present is exported, after its
-    keep values and corrections are recorded as decisions in the store (if
-    there is one); with no review table, or with --from-store, the store's
-    flight list is exported with the saved decisions applied."""
+    """Where the export reads from: with --from-store, the store; with
+    --review PATH, that table; otherwise, with a store, the review table if
+    the user has edited it since review wrote it, else the store (so a
+    decision made since in the application is never undone by an untouched
+    table); with no store, the review table. On the table route with a
+    store, the values the user changed are first recorded as decisions."""
     review_path = Path(args.review).expanduser() if args.review else config.review_output
     output_dir = Path(args.output_dir).expanduser() if args.output_dir else config.export_output_dir
     store_path = _store_path(args, config)
     if args.from_store and args.review:
         raise UsageError("--from-store exports from the store and ignores the review table; do not pass --review too")
-    from_store = args.from_store or (not args.review and not review_path.exists() and store_path.is_file())
-    if from_store and not store_path.is_file():
+    if args.from_store and not store_path.is_file():
         print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
         return EXIT_ERROR
-    if args.dry_run and not from_store:
+    if args.dry_run and not args.from_store:
         raise UsageError("--dry-run shows what exporting from the store would do; pass --from-store with it")
     try:
         if args.dry_run:
@@ -224,17 +225,19 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
                 plan = export.plan_store_export(config, store, config.export_data_dir, config.export_data_url)
             print(export.format_plan(plan))
             return EXIT_OK
-        if from_store:
+        if store_path.is_file():
             with Store(store_path) as store:
-                summary = export.run_store_export(
-                    config, store, output_dir, config.export_data_dir, config.export_data_url
-                )
-                _record_export(store, summary)
-        elif store_path.is_file():
-            with Store(store_path) as store:
-                summary = export.run_export(
-                    review_path, output_dir, config.export_data_dir, config.export_data_url, store=store, config=config
-                )
+                if args.from_store or (not args.review and not review.table_edited(store, review_path)):
+                    unedited = review_path if not args.from_store and review_path.exists() else None
+                    summary = export.run_store_export(
+                        config, store, output_dir, config.export_data_dir, config.export_data_url,
+                        unedited_table=unedited,
+                    )
+                else:
+                    summary = export.run_export(
+                        review_path, output_dir, config.export_data_dir, config.export_data_url, store=store,
+                        config=config,
+                    )
                 _record_export(store, summary)
         else:
             summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)

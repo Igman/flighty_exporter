@@ -25,7 +25,14 @@ Tables (extended by later passes):
   extracted. Listed in the failures file; not an extraction failure.
 - ``failures``: the latest failure per message and pass.
 - ``review_tables``: a hash of each review table as review last wrote it, so
-  that an edited table is not overwritten.
+  that an edited table is not overwritten, and whether export has since
+  recorded edits from that table (``edits_recorded``: 1/0).
+- ``review_table_rows``: for each review table, what review wrote in each
+  row that names a flight (its keep, date, flight number, origin and
+  destination, as written), so that export can tell which values the user
+  changed in a spreadsheet. Replaced whenever review writes the table; a
+  row is brought up to date when export records that row's edits. A store
+  from before this table existed gets it empty.
 - ``review_decisions``: the user's review decisions per flight (see
   ``flights.decisions``), keyed by the flight's identity: a keep override
   (1/0, NULL for none), corrections to date, flight number, origin and
@@ -104,7 +111,18 @@ CREATE TABLE IF NOT EXISTS failures (
 CREATE TABLE IF NOT EXISTS review_tables (
     path TEXT PRIMARY KEY,
     sha256 TEXT NOT NULL,
-    written_at TEXT NOT NULL
+    written_at TEXT NOT NULL,
+    edits_recorded INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS review_table_rows (
+    path TEXT NOT NULL,
+    flight_key TEXT NOT NULL,
+    keep TEXT NOT NULL,
+    date TEXT NOT NULL,
+    flight_number TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    PRIMARY KEY (path, flight_key)
 );
 CREATE TABLE IF NOT EXISTS review_decisions (
     flight_key TEXT PRIMARY KEY,
@@ -167,6 +185,10 @@ class Store:
         if "mbox_offset" not in columns:
             # Existing rows: unknown (NULL) until extract or audit finds them by scanning.
             self._db.execute("ALTER TABLE messages ADD COLUMN mbox_offset INTEGER")
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(review_tables)")}
+        if "edits_recorded" not in columns:
+            # Existing tables: no edits recorded from them by this rule yet.
+            self._db.execute("ALTER TABLE review_tables ADD COLUMN edits_recorded INTEGER NOT NULL DEFAULT 0")
 
     def close(self) -> None:
         self._db.close()
@@ -384,12 +406,56 @@ class Store:
                 (str(path.resolve()), sha256, _now()),
             )
 
+    def review_table_edits_recorded(self, path: Path) -> bool:
+        """Whether export has recorded edits from the review table at
+        ``path`` since review last wrote it."""
+        row = self._db.execute(
+            "SELECT edits_recorded FROM review_tables WHERE path = ?", (str(path.resolve()),)
+        ).fetchone()
+        return bool(row and row[0])
+
     def review_table_hash(self, path: Path) -> str | None:
         """The hash of the review table at ``path`` as review last wrote it."""
         row = self._db.execute(
             "SELECT sha256 FROM review_tables WHERE path = ?", (str(path.resolve()),)
         ).fetchone()
         return row[0] if row else None
+
+    # The values review wrote in each row of a review table: a row is
+    # (keep, date, flight_number, origin, destination), keyed by flight.
+
+    def record_review_rows(self, path: Path, rows: dict[str, tuple[str, str, str, str, str]]) -> None:
+        """Replace what is recorded as written in the review table at ``path``."""
+        resolved = str(path.resolve())
+        with self._write():
+            self._db.execute("DELETE FROM review_table_rows WHERE path = ?", (resolved,))
+            self._db.executemany(
+                "INSERT INTO review_table_rows (path, flight_key, keep, date, flight_number, origin, destination) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(resolved, key, *values) for key, values in rows.items()],
+            )
+
+    def update_review_row(self, path: Path, flight_key: str, values: tuple[str, str, str, str, str]) -> None:
+        """Record one row of the review table at ``path`` as now holding
+        ``values`` (export recorded the user's edits of it)."""
+        resolved = str(path.resolve())
+        with self._write():
+            self._db.execute(
+                "INSERT OR REPLACE INTO review_table_rows (path, flight_key, keep, date, flight_number, origin, "
+                "destination) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (resolved, flight_key, *values),
+            )
+            self._db.execute("UPDATE review_tables SET edits_recorded = 1 WHERE path = ?", (resolved,))
+
+    def review_rows(self, path: Path) -> dict[str, tuple[str, str, str, str, str]]:
+        """What review wrote in each row of the review table at ``path``, by
+        flight key; empty if nothing is recorded for it."""
+        rows = self._db.execute(
+            "SELECT flight_key, keep, date, flight_number, origin, destination FROM review_table_rows "
+            "WHERE path = ?",
+            (str(path.resolve()),),
+        )
+        return {key: tuple(values) for key, *values in rows}  # type: ignore[misc]
 
     # -- review decisions -------------------------------------------------------
     # A store from before decisions existed gets the empty table from the

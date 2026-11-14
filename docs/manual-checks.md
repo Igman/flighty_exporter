@@ -262,7 +262,9 @@ same flights in the same order.
 11. **Saved across launches.** Make a keep change and a correction, `q`
     (status `0`), relaunch, resume: the same decisions show. `fe review
     --force` writes a table with them and `fe export --from-store` exports
-    them.
+    them. A plain `fe export` exports them too, even with an untouched
+    `review.csv` written before the decisions: its summary says the store
+    was the source and that the review table is as review wrote it.
 12. **No flights.** With a mailbox without flight emails: "No flights
     found.", where to look, the count of unreadable emails (`x`), and for a
     Quick run that Thorough exists. The footer offers only `d`, `x`, `e`,

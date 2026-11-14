@@ -639,14 +639,29 @@ uv run flighty-exporter export [--review REVIEW] [--output-dir OUTPUT_DIR] [--st
 Writes the import file and the manual-add list (columns `date`, `origin`,
 `destination`, `flight_number`, `reason`, `message_date`,
 `message_subject`, `done`) into the config file's folder or `--output-dir`.
-It reads the flights from, in order: the review table (`--review` or the
-configured `review.csv`), first recording its keep values and corrections in
-the store as decisions, matched by `flight_id`, where they differ from what
-the tool produced; or, with no review table, the store; or the store with
-`--from-store` even when a review table exists. `--from-store --dry-run`
-prints the plan and writes nothing. The summary gives where each file was
+It reads the flights from:
+
+- with `--from-store`, the store, even when a review table exists;
+- with `--review PATH`, that table;
+- otherwise, when there is a store: the configured `review.csv` if you have
+  edited it since `review` (or `run`) wrote it, else the store. A table that
+  does not exist, or is exactly as `review` wrote it, holds no edits, so a
+  decision you made since in the application is exported, not undone;
+- with no store, the review table, as it is.
+
+Reading a review table with a store, export first records as decisions
+only the values you changed in it (`keep`, `date`, `flight_number`,
+`origin`, `destination`), matched by `flight_id` and compared with what
+`review` wrote in that row; a value you left as written changes nothing, so
+decisions made in the application for that flight, or for any flight whose
+row you did not touch, stay. Each row with a `flight_id` is then exported as
+the store has that flight, decisions applied; rows without one are exported
+as the table has them. `--from-store --dry-run` prints the plan and writes
+nothing. The summary gives where each file was
 written, `flights exported`, `flights to add by hand`, the `source of the
-export`, the rows read, `not kept`, and `rejected as invalid` with the row
+export`, `decisions recorded from the review table` (when a store is used
+and a review table was read or found unedited), the rows read, `not kept`,
+and `rejected as invalid` with the row
 number and reason of each (a keep value that is not yes or no, a date that
 is not a real `YYYY-MM-DD` date, an empty origin or destination).
 
@@ -754,7 +769,10 @@ ignored; anything else is reported and the row skipped), and correct `date`,
 `flight_number`, `origin` or `destination` in place, normalised as in the
 review. Dates must stay `YYYY-MM-DD`; spreadsheets like to reformat them, so
 check the column before saving. Leave `flight_id` as it is: it is how your
-edits find their flight. Only `keep`, the four correctable fields,
+edits find their flight. Only what you change is recorded (see
+[export](#export)), so you can mix the spreadsheet and the application: a
+flight you decided in the application keeps that decision unless you change
+its row. Only `keep`, the four correctable fields,
 `message_date`, `message_subject` and `flight_id` are read. Reordered or
 extra columns, headers with other case or stray spaces, other quoting and
 line endings, a comma, semicolon or tab separator and blank trailing rows

@@ -433,3 +433,176 @@ def test_a_store_from_each_earlier_version_works_with_decisions_positions_and_sa
         assert db.execute("PRAGMA user_version").fetchone()[0] == 7
         assert db.execute("SELECT count(*) FROM messages WHERE mbox_offset IS NULL").fetchone()[0] == 0
         assert len(db.execute("SELECT * FROM review_decisions").fetchall()) == 1
+
+
+# -- which source a plain export uses, and what an edited table records ----------------------------
+# `run` (and `review`) write the review table; a decision made afterwards in
+# the application (here with `decide`, which saves it the same way) must not
+# be undone by a plain `export` of a table the user never touched.
+
+TABLE_SOURCE = "source of the export:       review table"
+STORE_SOURCE = "source of the export:       store"
+
+
+def run_command(workspace, mails: list[Mail]):
+    """Write ``mails`` to the mailbox and run the whole pipeline with `run`."""
+    mbox = write_mbox(workspace.root / "mail.mbox",
+                      [email(m.subject, "Invented email.\n", date=m.header_date) for m in mails])
+    for m in mails:
+        workspace.ollama.decisions[m.subject] = Decision(0.9, m.email_type)
+        workspace.ollama.chats[m.subject] = Chat(m.record)
+    result = workspace.run("run", "--mailbox", str(mbox))
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def decide(workspace, *args: str) -> None:
+    result = workspace.run("decide", *args)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def exported(directory: Path) -> list[tuple[str, ...]]:
+    """(date, origin, destination, flight number) of each import file row."""
+    return [tuple(line.split(",")[:4]) for line in data_rows(the_import_file(directory))]
+
+
+def current_view(workspace) -> dict[str, tuple[str, ...]]:
+    """The flights as the store now has them, through a fresh review table elsewhere."""
+    review(workspace, "--output", str(workspace.root / "now.csv"))
+    return {key: view(row) for key, row in rows_by_id(workspace.root / "now.csv").items()}
+
+
+def test_a_drop_made_after_run_survives_a_plain_export(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    decide(workspace, "2025-06-01", "QQ410", "--drop")
+
+    result = export(workspace)
+
+    assert STORE_SOURCE in result.stdout
+    assert exported(workspace.root) == [("2025-05-12", "LIS", "OSL", "ZZ1234")]
+    assert current_view(workspace)["2025-06-01 QQ410"][0] == "no"
+    # The untouched table carried no edits; it says so and records nothing.
+    assert result.count(RECORDED) == 0
+    # A plain review may overwrite it, and the table then shows the decision.
+    review(workspace)
+    assert rows_by_id(workspace.root / REVIEW)["2025-06-01 QQ410"]["keep"] == "no"
+
+
+def test_a_correction_made_after_run_survives_a_plain_export(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    decide(workspace, "2025-05-12", "ZZ1234", "--set", "flight_number=ZZ1235")
+
+    result = export(workspace)
+
+    assert STORE_SOURCE in result.stdout
+    assert exported(workspace.root) == [("2025-06-01", "AMS", "KEF", "QQ410"),
+                                        ("2025-05-12", "LIS", "OSL", "ZZ1235")]
+    assert current_view(workspace)["2025-05-12 ZZ1234"][2] == "ZZ1235"
+
+
+def test_an_edited_table_records_only_the_changed_row_and_leaves_other_decisions(workspace):
+    run_command(workspace, [GOOD, OTHER, FLAGGED])
+    decide(workspace, "2025-06-01", "QQ410", "--drop")
+    # The table still shows QQ410 as kept; the user changes another row only.
+    edit_review(workspace, lambda rows: rows["2025-05-12 ZZ1234"].update(flight_number="ZZ1235"))
+
+    result = export(workspace)
+
+    assert TABLE_SOURCE in result.stdout
+    assert result.count(RECORDED) == 1
+    assert exported(workspace.root) == [("2025-05-12", "LIS", "OSL", "ZZ1235")]
+    now = current_view(workspace)
+    assert now["2025-06-01 QQ410"][0] == "no"
+    assert now["2025-05-12 ZZ1234"][2] == "ZZ1235"
+    assert now["2025-07-01 ZZ300"][0] == "no"
+    # Exporting the same table again records nothing more and changes nothing.
+    again = export(workspace, "--output-dir", "again")
+    assert again.count(RECORDED) == 0
+    assert exported(workspace.root / "again") == [("2025-05-12", "LIS", "OSL", "ZZ1235")]
+
+
+def test_an_edited_field_wins_over_a_decision_made_after_the_table_was_written(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    decide(workspace, "2025-06-01", "QQ410", "--set", "destination=LHR")
+    decide(workspace, "2025-06-01", "QQ410", "--drop")
+    # The table (written before) shows QQ410 kept, to KEF; the user changes its destination.
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(destination="OSL"))
+
+    result = export(workspace)
+
+    assert result.count(RECORDED) == 1
+    # The edited field is the user's; the keep they did not touch stays as decided.
+    assert current_view(workspace)["2025-06-01 QQ410"][:5] == ("no", "2025-06-01", "QQ410", "AMS", "OSL")
+    assert exported(workspace.root) == [("2025-05-12", "LIS", "OSL", "ZZ1234")]
+
+
+def test_an_edited_row_wins_over_a_decision_the_table_already_showed(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    decide(workspace, "2025-06-01", "QQ410", "--set", "destination=LHR")
+    decide(workspace, "2025-06-01", "QQ410", "--drop")
+    review(workspace)  # the table now shows the decision: not kept, to LHR
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="yes", destination="KEF"))
+
+    result = export(workspace)
+
+    assert result.count(RECORDED) == 1
+    assert current_view(workspace)["2025-06-01 QQ410"] == ("yes", "2025-06-01", "QQ410", "AMS", "KEF", "")
+    assert exported(workspace.root) == [("2025-06-01", "AMS", "KEF", "QQ410"),
+                                        ("2025-05-12", "LIS", "OSL", "ZZ1234")]
+
+
+def test_an_unedited_table_given_with_review_records_nothing_and_exports_the_current_list(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    decide(workspace, "2025-06-01", "QQ410", "--drop")
+    decide(workspace, "2025-05-12", "ZZ1234", "--set", "flight_number=ZZ1235")
+
+    result = export(workspace, "--review", str(workspace.root / REVIEW))
+
+    assert TABLE_SOURCE in result.stdout
+    assert result.count(RECORDED) == 0
+    assert exported(workspace.root) == [("2025-05-12", "LIS", "OSL", "ZZ1235")]
+    now = current_view(workspace)
+    assert now["2025-06-01 QQ410"][0] == "no" and now["2025-05-12 ZZ1234"][2] == "ZZ1235"
+
+
+def test_a_table_from_before_review_recorded_its_rows_compares_with_the_current_list(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    decide(workspace, "2025-06-01", "QQ410", "--drop")
+    review(workspace)  # the table shows the decision
+    # As a store from before this change would hold it: the table's hash, but not its rows.
+    with sqlite3.connect(workspace.root / "flighty_exporter.db") as db:
+        db.execute("DROP TABLE IF EXISTS review_table_rows")
+    edit_review(workspace, lambda rows: rows["2025-05-12 ZZ1234"].update(flight_number="ZZ1235"))
+
+    result = export(workspace)
+
+    assert TABLE_SOURCE in result.stdout
+    assert result.count(RECORDED) == 1
+    assert exported(workspace.root) == [("2025-05-12", "LIS", "OSL", "ZZ1235")]
+    assert current_view(workspace)["2025-06-01 QQ410"][0] == "no"
+
+
+def test_without_a_store_the_table_written_by_run_is_exported_as_it_is(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    (workspace.root / "flighty_exporter.db").unlink()
+
+    result = export(workspace)
+
+    assert TABLE_SOURCE in result.stdout
+    assert RECORDED not in result.stdout
+    assert exported(workspace.root) == [("2025-06-01", "AMS", "KEF", "QQ410"),
+                                        ("2025-05-12", "LIS", "OSL", "ZZ1234")]
+
+
+def test_from_store_ignores_an_edited_table_and_records_nothing_from_it(workspace):
+    run_command(workspace, [GOOD, OTHER])
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no"))
+    decide(workspace, "2025-05-12", "ZZ1234", "--set", "flight_number=ZZ1235")
+
+    result = export(workspace, "--from-store")
+
+    assert STORE_SOURCE in result.stdout
+    assert RECORDED not in result.stdout
+    assert exported(workspace.root) == [("2025-06-01", "AMS", "KEF", "QQ410"),
+                                        ("2025-05-12", "LIS", "OSL", "ZZ1235")]
+    assert current_view(workspace)["2025-06-01 QQ410"][0] == "yes"

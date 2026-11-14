@@ -37,7 +37,9 @@ attachments of selected messages that the extract pass could not read
 
 The review table is the user's to edit, so review records a hash of the file
 it wrote in the store and overwrites an existing table only if it is
-unchanged since then (or with ``--force``).
+unchanged since then (or with ``--force``). It also records what it wrote in
+each row (keep, date, flight number, origin, destination), so that export
+records as decisions only the values the user changed (see ``export``).
 
 Both files are UTF-8 with a byte-order mark so spreadsheets detect the encoding.
 """
@@ -152,18 +154,18 @@ class FlightList:
 
 
 def write_review(config: Config, store: Store, review_path: Path, failures_path: Path, force: bool) -> ReviewSummary:
-    if review_path.exists() and not force:
-        recorded = store.review_table_hash(review_path)
-        if recorded is None or recorded != file_hash(review_path):
-            raise ReviewExists(
-                f"review table {review_path} has been edited since review wrote it (or was not written by "
-                "review with this store). Overwriting it would lose your edits; pass --force to overwrite "
-                "it anyway, or --output to write elsewhere."
-            )
+    if review_path.exists() and not force and not _as_written(store, review_path):
+        raise ReviewExists(
+            f"review table {review_path} has been edited since review wrote it (or was not written by "
+            "review with this store). Overwriting it would lose your edits; pass --force to overwrite "
+            "it anyway, or --output to write elsewhere."
+        )
     built = build_flight_list(config, store)
     discarded = discard_stale_decisions(store, built)
-    write_csv(review_path, REVIEW_COLUMNS, [_row(reviewed) for reviewed in built.flights])
+    rows = [_row(reviewed) for reviewed in built.flights]
+    write_csv(review_path, REVIEW_COLUMNS, rows)
     store.record_review_table(review_path, file_hash(review_path))
+    store.record_review_rows(review_path, {row["flight_id"]: written_values(row) for row in rows})
     write_csv(failures_path, FAILURE_COLUMNS, built.failures)
     return review_summary(config, built, review_path, failures_path, discarded)
 
@@ -299,6 +301,33 @@ def _row(reviewed: ReviewedFlight) -> dict[str, str]:
         "source_messages": " | ".join(f"{s.message_date[:10]} {s.subject}" for s in flight.sources),
         "flight_id": reviewed.key,
     }
+
+
+# The columns of a review table row that export reads as the user's choices.
+EDITABLE_COLUMNS = ("keep", "date", "flight_number", "origin", "destination")
+
+
+def written_values(row: dict[str, str]) -> tuple[str, str, str, str, str]:
+    """A row's keep, date, flight number, origin and destination, as recorded
+    in the store for the review table it was written to."""
+    return tuple(row.get(name, "") for name in EDITABLE_COLUMNS)  # type: ignore[return-value]
+
+
+def table_edited(store: Store, review_path: Path) -> bool:
+    """Whether the review table at ``review_path`` exists and may hold edits
+    the store has not seen: it is not byte-identical to what review last
+    wrote there with this store (or nothing is recorded for it), or export
+    has recorded edits from it since (so even a table edited back to what
+    review wrote differs from what the store last took from it)."""
+    if not review_path.exists():
+        return False
+    return not _as_written(store, review_path) or store.review_table_edits_recorded(review_path)
+
+
+def _as_written(store: Store, review_path: Path) -> bool:
+    """Whether the existing review table is byte-identical to what review last wrote there."""
+    recorded = store.review_table_hash(review_path)
+    return recorded is not None and recorded == file_hash(review_path)
 
 
 def _source(flight: Flight) -> str:
