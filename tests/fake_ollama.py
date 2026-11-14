@@ -6,7 +6,8 @@ request it receives so tests can assert on what the tool sent.
 
 Endpoints are registered in ``FakeOllama.routes`` ((method, path) ->
 handler): the decision endpoint, the chat endpoint, and the version and tags
-endpoints the preflight check asks. By default the fake reports a recent
+endpoints the preflight check asks, and the pull endpoint, which streams
+scripted progress lines. By default the fake reports a recent
 version and lists both default models; ``version``, ``models`` and the
 ``*_status`` / ``*_raw_body`` fields script other answers.
 """
@@ -17,6 +18,7 @@ import json
 import math
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
@@ -114,6 +116,15 @@ class FakeOllama:
     # closed without an answer, as when the server goes away mid-pass. Set it
     # from ``on_request`` to drop the request being handled.
     unreachable: bool = False
+    # POST /api/pull streams scripted progress for the model as JSON lines,
+    # ``pull_delay`` seconds apart (a layer of ``pull_total`` bytes, then
+    # "success"), and from then on lists the model at /api/tags. A model in
+    # ``pull_errors`` gets an error line after the manifest line instead; a
+    # non-200 ``pull_status`` refuses the request with that HTTP error.
+    pull_errors: dict[str, str] = field(default_factory=dict)
+    pull_status: int = 200
+    pull_delay: float = 0.0
+    pull_total: int = 2000
 
     def __post_init__(self) -> None:
         self.routes: dict[tuple[str, str], Callable[[Any], tuple[int, str]]] = {
@@ -122,6 +133,7 @@ class FakeOllama:
             ("GET", "/api/version"): self._version,
             ("GET", "/api/tags"): self._tags,
         }
+        self.routes[("POST", "/api/pull")] = self._pull
         self._chat_counts: dict[str, int] = {}
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
@@ -158,6 +170,9 @@ class FakeOllama:
                     status, payload = 404, json.dumps({"error": "not found"})
                 else:
                     status, payload = route(body)
+                if not isinstance(payload, str):
+                    self._stream(status, payload)
+                    return
                 data = payload.encode("utf-8")
                 try:
                     self.send_response(status)
@@ -165,6 +180,21 @@ class FakeOllama:
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def _stream(self, status: int, lines: Any) -> None:
+                """Send an iterable of JSON lines as they come, closing the
+                connection at the end (no Content-Length)."""
+                self.close_connection = True
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/x-ndjson")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    for line in lines:
+                        self.wfile.write(line.encode("utf-8") + b"\n")
+                        self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
@@ -236,6 +266,41 @@ class FakeOllama:
                 ]
             }
         )
+
+    def pull_requests(self) -> list[Any]:
+        with self._lock:
+            return [r.body for r in self.requests if r.path == "/api/pull"]
+
+    def _pull(self, body: Any) -> tuple[int, Any]:
+        if self.pull_status != 200:
+            return self.pull_status, json.dumps({"error": "scripted failure"})
+        model = body.get("model", "") if isinstance(body, dict) else ""
+        return 200, self._pull_lines(model)
+
+    def _pull_lines(self, model: str):
+        """Progress lines shaped like the real server's (see Ollama's API
+        documentation, "Pull a Model"), sent ``pull_delay`` seconds apart."""
+        digest = "sha256:5f1e2d" + "0" * 58
+        total = self.pull_total
+
+        def line(data: dict[str, Any]) -> str:
+            if self.pull_delay:
+                time.sleep(self.pull_delay)
+            return json.dumps(data)
+
+        yield line({"status": "pulling manifest"})
+        if model in self.pull_errors:
+            yield line({"error": self.pull_errors[model]})
+            return
+        layer = {"status": "pulling 5f1e2d", "digest": digest, "total": total}
+        yield line(layer)  # "completed" is missing until bytes arrive
+        yield line({**layer, "completed": total // 2})
+        yield line({**layer, "completed": total})
+        for status in ("verifying sha256 digest", "writing manifest", "removing any unused layers"):
+            yield line({"status": status})
+        if model not in self.models:
+            self.models.append(model)
+        yield line({"status": "success"})
 
     def _chat(self, body: Any) -> tuple[int, str]:
         subject = chat_subject(body)

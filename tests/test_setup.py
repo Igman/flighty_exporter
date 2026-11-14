@@ -391,3 +391,91 @@ def test_an_unknown_thoroughness_is_a_usage_error(workspace):
 
     assert result.returncode == 2
     assert "invalid choice: 'extreme'" in result.stderr
+
+
+# -- setup --check: is the model server ready? -----------------------------------------
+
+
+def check(workspace, config_text: str | None = None, *, pulled: bool = True):
+    if config_text is not None:
+        workspace.write_config(config_text, pulled=pulled)
+    box = mbox(workspace)
+    return workspace.run("setup", "--mailbox", str(box), "--check")
+
+
+def test_check_reports_a_ready_server(workspace):
+    result = check(workspace)
+
+    assert result.returncode == 0, result.stderr
+    assert f"Model server {workspace.ollama.url}:" in result.stdout
+    assert "on this machine: yes" in result.stdout
+    assert "reachable:       yes" in result.stdout
+    assert "version:         0.40.16 (new enough)" in result.stdout
+    assert "[models] decision: nimble: pulled" in result.stdout
+    assert "[models] extraction: gemma4:12b-it-q4_K_M: pulled" in result.stdout
+    assert "Ready: the model server has both models." in result.stdout
+    assert workspace.ollama.paths() == ["/api/version", "/api/tags"]
+
+
+def test_check_reports_an_unreachable_server_with_the_existing_message(workspace):
+    from test_preflight import dead_address
+
+    address = dead_address()
+    result = check(workspace, f'[ollama]\naddress = "{address}"\n')
+
+    assert result.returncode == 1
+    assert "reachable:       no" in result.stdout
+    assert f"error: the Ollama server at {address} is not reachable" in result.stdout
+    assert "Start it with `ollama serve`, or open the Ollama app, then rerun setup --check." in result.stdout
+    # The answers were still written.
+    assert written(workspace)["mailbox"] == "mail.mbox"
+
+
+def test_check_reports_a_server_that_is_too_old(workspace):
+    workspace.ollama.version = "0.30.1"
+
+    result = check(workspace)
+
+    assert result.returncode == 1
+    assert "version:         0.30.1 (too old)" in result.stdout
+    assert "is version 0.30.1, but flighty-exporter needs Ollama 0.35.0 or later" in result.stdout
+    assert "/api/tags" not in workspace.ollama.paths()
+
+
+def test_check_lists_a_missing_decision_model_with_its_size(workspace):
+    workspace.ollama.models = ["gemma4:12b-it-q4_K_M"]
+
+    result = check(workspace)
+
+    assert result.returncode == 1
+    assert "[models] decision: nimble: missing (about 9.3 GB)" in result.stdout
+    assert "[models] extraction: gemma4:12b-it-q4_K_M: pulled" in result.stdout
+    assert "the model nimble ([models] decision) is not pulled" in result.stdout
+    assert "Or download the missing models with `flighty-exporter pull-models --yes`." in result.stdout
+
+
+def test_check_lists_a_missing_extraction_model_of_unknown_size(workspace):
+    result = check(
+        workspace,
+        f'[ollama]\naddress = "{workspace.ollama.url}"\n\n[models]\nextraction = "fictional-reader:3b"\n',
+        pulled=False,
+    )
+
+    assert result.returncode == 1
+    assert "[models] decision: nimble: pulled" in result.stdout
+    assert (
+        "[models] extraction: fictional-reader:3b: missing (size not known until the download starts)"
+        in result.stdout
+    )
+
+
+def test_check_refuses_a_non_local_address_before_any_request(workspace):
+    from test_preflight import NON_LOCAL
+
+    result = check(workspace, f'[ollama]\naddress = "{NON_LOCAL}"\n')
+
+    assert result.returncode == 1
+    assert "on this machine: no" in result.stdout
+    assert f"error: refusing to use the Ollama server at {NON_LOCAL}" in result.stdout
+    assert "email content would leave this machine" in result.stdout
+    assert workspace.ollama.paths() == []

@@ -12,6 +12,10 @@ each flight's source emails.
 ``session`` describes the session in the store and, with
 ``--fresh-preview``, what ``run --fresh`` would delete (see
 ``engine.session``).
+``setup`` writes guided setup's three answers to the config file (see
+``engine.setup``) and with ``--check`` reports whether the model server is
+ready (``engine.readiness``); ``pull-models`` downloads missing models
+through the server (``ollama.pull``), only when given ``--yes``.
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
@@ -33,6 +37,7 @@ from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
 from .engine import session
 from .engine import setup
 from .engine.readiness import check_readiness, format_readiness
+from .ollama.pull import KEPT_PARTIAL, PullFailed, PullProgress, format_bytes, pull_model
 from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
 from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
@@ -629,6 +634,86 @@ COMMANDS["setup"] = (
     "every other setting), as the application's setup screen does",
     _setup_arguments,
     cmd_setup,
+)
+
+def cmd_pull_models(args: argparse.Namespace, config: Config) -> int:
+    """List the configured models the server lacks; with --yes, download them."""
+    readiness = check_readiness(config, allow_remote=args.allow_remote, command="pull-models")
+    for warning in readiness.warnings:
+        _warn(warning)
+    if readiness.problem is not None:
+        print(f"error: {readiness.problem}", file=sys.stderr)
+        return EXIT_ERROR
+    if not readiness.missing:
+        names = " and ".join(model.name for model in readiness.models)
+        print(f"Both models are already on the Ollama server at {readiness.address}: {names}.")
+        return EXIT_OK
+    if not args.yes:
+        print(f"Missing on the Ollama server at {readiness.address}:")
+        for model in readiness.missing:
+            print(f"  {model.name} ({model.setting}): {model.size_text}")
+        print("Nothing was downloaded. Run `flighty-exporter pull-models --yes` to download them.")
+        return EXIT_OK
+    for model in readiness.missing:
+        print(f"Downloading {model.name} ({model.setting}, {model.size_text})…")
+        printer = _PullPrinter()
+        try:
+            for progress in pull_model(
+                readiness.address,
+                model.name,
+                allow_remote=config.ollama_allow_remote or args.allow_remote,
+                command="pull-models",
+                timeout=config.ollama_timeout_seconds,
+            ):
+                printer(progress)
+        except PullFailed as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        except KeyboardInterrupt:
+            print(f"Interrupted. {KEPT_PARTIAL}", file=sys.stderr)
+            return EXIT_INTERRUPTED
+    after = check_readiness(config, allow_remote=args.allow_remote, command="pull-models")
+    for model in readiness.missing:
+        if any(m.name == model.name and m.present for m in after.models):
+            print(f"{model.name} is now on the Ollama server.")
+        else:
+            print(f"error: the server reported {model.name} as pulled but does not list it.", file=sys.stderr)
+            return EXIT_ERROR
+    return EXIT_OK
+
+
+class _PullPrinter:
+    """Prints a pull's progress: each new status, and a layer's bytes at
+    most every tenth of the way."""
+
+    def __init__(self) -> None:
+        self.last: tuple[str, int] | None = None
+
+    def __call__(self, progress: PullProgress) -> None:
+        if progress.total:
+            done = progress.completed or 0
+            percent = done * 100 // progress.total
+            if self.last and self.last[0] == progress.status and percent < min(self.last[1] + 10, 100):
+                return
+            self.last = (progress.status, percent)
+            print(f"  {progress.status}: {format_bytes(done)} of {format_bytes(progress.total)} ({percent}%)")
+        elif not self.last or self.last[0] != progress.status:
+            self.last = (progress.status, 0)
+            print(f"  {progress.status}")
+
+
+def _pull_models_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--yes", action="store_true", help="download the missing models (without it, only list them with their sizes)"
+    )
+    _allow_remote_argument(parser)
+
+
+COMMANDS["pull-models"] = (
+    "download the configured models the local Ollama server does not have yet, with progress (lists them and "
+    "their approximate sizes unless --yes is given)",
+    _pull_models_arguments,
+    cmd_pull_models,
 )
 
 # Commands that load the config file themselves (``setup`` may create it).
