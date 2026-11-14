@@ -19,7 +19,13 @@ from the store and the mailbox, never from a stored flag.
 - ``KeyboardInterrupt`` ends the current stage (reported as stopped) and is
   re-raised for the caller.
 
-Thoroughness: Quick runs no audit. Thorough is not available yet.
+Thoroughness: Quick runs no audit. Thorough adds two stages after extract
+(see ``thorough``): the audit, with the configured sample size and seed,
+which also writes the audit report file; then the include stage, which
+lowers the session's effective threshold and extracts the newly included
+messages when the audit found flight emails below it within the budget, and
+is skipped otherwise. Both are model stages like extract, and the include
+happens once per run.
 """
 
 from __future__ import annotations
@@ -31,23 +37,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from ..config import QUICK, Config
+from ..config import THOROUGH, Config
 from ..ollama.connection import OllamaUnreachable, PreflightError
 from ..ollama.decision import DecisionClient
 from ..ollama.extraction import ExtractionClient
 from ..output.review import ReviewExists, ReviewSummary, write_review, write_review_without_table
 from ..progress import Progress
 from ..stages.classify import ClassifySummary, run_classify
+from ..stages.audit import AuditResult, run_audit, write_audit_csv
 from ..stages.extract import ExtractSummary, run_extract
 from ..store import Store
+from ..threshold import effective_threshold, record_effective_threshold
 from .events import (
     ADDRESS,
+    AUDIT,
     CLASSIFY,
     DONE,
     EXTRACT,
+    INCLUDE,
     NOTHING_TO_DO,
     PREFLIGHT,
     REVIEW,
+    SKIPPED,
     STOPPED,
     UNREACHABLE,
     Event,
@@ -62,9 +73,10 @@ from .events import (
 )
 from .models import DECISION_SETTING, EXTRACTION_SETTING, address_warning, decision_client, extraction_client, pass_store
 from .report import REVIEW_TABLE_LEFT, RunReport
+from .thorough import LOWERED, IncludeSummary, include_messages, outcome_text, plan_include
 
 QUICK_STAGES = (CLASSIFY, EXTRACT, REVIEW)
-THOROUGH_NOT_AVAILABLE = "thorough mode is not available yet"
+THOROUGH_STAGES = (CLASSIFY, EXTRACT, AUDIT, INCLUDE, REVIEW)
 
 # How a run ended.
 FINISHED = "finished"
@@ -120,21 +132,29 @@ def run_pipeline(
     them). ``command`` is what the server checks' messages tell the user to
     rerun. Raises ``RunError`` before any work if the run cannot start."""
     thoroughness = thoroughness or config.thoroughness
-    if thoroughness != QUICK:
-        raise RunError(THOROUGH_NOT_AVAILABLE)
     run = _Run(
         config, mailbox_path, store_path, subscriber or (lambda event: None), should_stop or (lambda: False),
         progress_stream, command,
     )
-    run.emit(RunStarted(QUICK_STAGES, thoroughness, mailbox_path, store_path))
+    stages = THOROUGH_STAGES if thoroughness == THOROUGH else QUICK_STAGES
+    run.emit(RunStarted(stages, thoroughness, mailbox_path, store_path))
+    audit: AuditResult | None = None
+    include: IncludeSummary | None = None
+    audit_report: Path | None = None
     try:
         run.check_address(allow_remote)
         classify = run.classify()
         extract = run.extract()
+        if thoroughness == THOROUGH:
+            audit, audit_report = run.audit()
+            include = run.include(audit)
         review, left = run.review(review_path or config.review_output, failures_path or config.failures_output, force)
     except _Halt as halt:
         return halt.result
-    report = RunReport(thoroughness, classify, extract, review, review_table_left=left)
+    report = RunReport(
+        thoroughness, classify, extract, review, review_table_left=left,
+        audit=audit, include=include, audit_report=audit_report,
+    )
     run.emit(RunFinished(report))
     return RunResult(FINISHED, report=report)
 
@@ -182,13 +202,56 @@ class _Run:
     def extract(self) -> ExtractSummary:
         client = extraction_client(self.config)
         with self._model_stage(EXTRACT, client, EXTRACTION_SETTING) as (store, finish):
-            selected = store.extraction_candidates(self.config.decision_model, self.config.threshold)
+            selected = store.extraction_candidates(self.config.decision_model, effective_threshold(self.config, store))
             pending = len(set(selected) - store.extracted_ids(self.config.extraction_model))
             self.emit(StageStarted(EXTRACT, pending))
             summary = run_extract(
                 self.config, self.mailbox_path, store, client, self.progress_stream, self._on_progress(EXTRACT)
             )
             finish(summary, pending == 0)
+        return summary
+
+    def audit(self) -> tuple[AuditResult, Path | None]:
+        """Audit with the configured sample size and seed, and write the
+        audit report file as the audit command does (unless nothing was
+        classified, so there is nothing to report)."""
+        client = extraction_client(self.config)
+        with self._model_stage(AUDIT, client, EXTRACTION_SETTING) as (store, finish):
+            result = run_audit(
+                self.config, self.mailbox_path, store, client, self.config.audit_sample_size, self.config.audit_seed,
+                self.progress_stream, self._on_progress(AUDIT),
+                on_start=lambda total: self.emit(StageStarted(AUDIT, total)),
+            )
+            written = None
+            if result.classified:
+                write_audit_csv(self.config.audit_output, result, effective_threshold(self.config, store))
+                written = self.config.audit_output
+            finish(result, result.to_extract == 0)
+        return result, written
+
+    def include(self, audit: AuditResult) -> IncludeSummary:
+        """Act on the audit once: within the budget, record the lowered
+        effective threshold (before any request, so a stop leaves it
+        recorded and the rest pending) and extract the newly included
+        messages; otherwise report the stage as skipped."""
+        self._check_stop()
+        with Store(self.store_path) as store:
+            summary = plan_include(self.config, store, audit)
+            if summary.outcome == LOWERED:
+                assert summary.suggested is not None
+                record_effective_threshold(store, summary.suggested)
+        if summary.outcome != LOWERED:
+            self.emit(StageStarted(INCLUDE, 0))
+            self.emit(StageFinished(INCLUDE, SKIPPED, summary, outcome_text(summary)))
+            return summary
+        client = extraction_client(self.config)
+        with self._model_stage(INCLUDE, client, EXTRACTION_SETTING) as (store, finish):
+            self.emit(StageStarted(INCLUDE, len(summary.pending)))
+            include_messages(
+                self.config, self.mailbox_path, store, client, summary, self.progress_stream,
+                self._on_progress(INCLUDE),
+            )
+            finish(summary, False)
         return summary
 
     def review(self, review_path: Path, failures_path: Path, force: bool) -> tuple[ReviewSummary, bool]:

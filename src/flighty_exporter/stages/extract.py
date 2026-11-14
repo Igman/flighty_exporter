@@ -32,6 +32,7 @@ from ..mail.reader import Mailbox, Message
 from ..ollama.extraction import ExtractionClient, ExtractionFailed
 from ..progress import Progress
 from ..store import EXTRACT_PASS, Store
+from ..threshold import effective_threshold
 from .summary import failure_lines
 
 PASS_NAME = EXTRACT_PASS
@@ -64,7 +65,7 @@ def run_extract(
 ) -> ExtractSummary:
     """Run the pass. KeyboardInterrupt and OllamaUnreachable propagate after
     the summary so far is attached to the exception as ``summary``."""
-    candidates = store.extraction_candidates(config.decision_model, config.threshold)
+    candidates = store.extraction_candidates(config.decision_model, effective_threshold(config, store))
     done = store.extracted_ids(config.extraction_model)
     summary = ExtractSummary(selected=len(candidates))
     pending = {identifier for identifier in candidates if identifier not in done}
@@ -182,8 +183,9 @@ def format_summary(summary: ExtractSummary, config: Config, store: Store) -> str
         lines = ["Extract pass stopped. Rerun to resume."]
     else:
         lines = ["Extract pass finished."]
+    threshold = effective_threshold(config, store)
     lines += [
-        f"  selected (gate >= {config.threshold:g}): {summary.selected}",
+        f"  selected (gate >= {threshold:g}): {summary.selected}",
         f"  extracted:            {summary.extracted}",
         f"  already extracted:    {summary.already_extracted}",
         f"  retries:              {summary.retries}",
@@ -195,11 +197,11 @@ def format_summary(summary: ExtractSummary, config: Config, store: Store) -> str
     lines += failure_lines(summary.failures)
     if summary.selected == 0:
         lines.append(
-            f"  No message has a gate probability at or above {config.threshold:g} for "
+            f"  No message has a gate probability at or above {threshold:g} for "
             f"{config.decision_model}. Run classify first, or lower [classify] threshold."
         )
 
-    selected = set(store.extraction_candidates(config.decision_model, config.threshold))
+    selected = set(store.extraction_candidates(config.decision_model, threshold))
     records = {k: v for k, v in store.extraction_records(config.extraction_model).items() if k in selected}
     lines.append("")
     lines.append(f"Stored results for {config.extraction_model} ({len(records)} messages):")

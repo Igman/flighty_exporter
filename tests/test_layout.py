@@ -8,7 +8,7 @@ import only from the groups listed for it in ``ALLOWED``:
 - flights imports nothing else from the package (pure domain);
 - mail may import only the record types (``flights.records``);
 - ollama may import the message type from mail and the record types;
-- the top-level core (config, store, progress, tables) may import only
+- the top-level core (config, store, progress, tables, threshold) may import only
   flights;
 - stages and output may import from everything below them, but not from
   each other, and neither imports the command line;
@@ -39,6 +39,7 @@ TOP_LEVEL = {
     "store": "core",
     "progress": "core",
     "tables": "core",
+    "threshold": "core",
     "cli": "entry",
     "__main__": "entry",
 }

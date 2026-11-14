@@ -16,7 +16,9 @@ from ..flights.consolidate import NO_PASSENGER_NAMED
 from ..flights.validate import REASON_KINDS
 from ..output.review import DECISIONS_DISCARDED, ReviewSummary
 from ..stages.classify import ClassifySummary
+from ..stages.audit import AuditResult
 from ..stages.extract import ExtractSummary
+from .thorough import IncludeSummary, check_lines
 
 REVIEW_TABLE_LEFT = "review table was edited and has been left as it is; pass --force to regenerate it"
 
@@ -30,12 +32,28 @@ class RunReport:
     # The review table existed and had been edited, so it was not rewritten;
     # ``review`` still holds the flights as the store has them.
     review_table_left: bool = False
+    # Thorough runs only: the audit's result, the include stage's summary, and
+    # the audit report file (None if the audit had nothing to report).
+    audit: AuditResult | None = None
+    include: IncludeSummary | None = None
+    audit_report: Path | None = None
 
     @property
     def files_written(self) -> list[tuple[str, Path]]:
         """(what, where) for every file this run wrote."""
         written = [] if self.review_table_left else [("review table", self.review.review_path)]
-        return written + [("failures file", self.review.failures_path)]
+        written += [("failures file", self.review.failures_path)]
+        if self.audit_report is not None:
+            written.append(("audit report", self.audit_report))
+        return written
+
+    @property
+    def extract_failed(self) -> int:
+        """Messages whose extraction still fails, by extract and include."""
+        failed = self.extract.failed + self.extract.not_in_mailbox
+        if self.include is not None:
+            failed += self.include.extraction.failed + self.include.extraction.not_in_mailbox
+        return failed
 
 
 def format_report(report: RunReport) -> str:
@@ -63,8 +81,11 @@ def format_report(report: RunReport) -> str:
     lines += [
         "  messages that failed:",
         f"    classify:                 {report.classify.failed}",
-        f"    extract:                  {report.extract.failed + report.extract.not_in_mailbox}",
+        f"    extract:                  {report.extract_failed}",
         f"  PDF attachments not read:   {review.unread_attachments}",
+    ]
+    lines += check_lines(report.audit, report.include)
+    lines += [
         "Files written:",
     ]
     lines += [f"  {what}: {where}" for what, where in report.files_written]
