@@ -208,13 +208,53 @@ include too when `[run] thoroughness = "thorough"`) and shows them live: every
 stage with its state, a progress bar for the running stage with the messages
 done, the time per message and the time remaining, running counts, and the
 end-of-run report when it finishes. It reads the same config file (`--config`
-works as for the commands) and needs `mailbox` set in it; guided setup is not
-available yet. Keys: `p` pauses after the message in progress and continues;
+works as for the commands); the first launch sets it up (see below). Keys: `p` pauses after the message in progress and continues;
 `q` quits after the message in progress (`q` or Ctrl-C again quits at once),
 and the next launch carries on where it stopped; `r` retries after a
 model-server problem, once you have fixed it. The same rule as the commands
 keeps email on this machine: a non-local Ollama address is refused unless the
 config file allows it.
+
+**First launch: setup.** With no session yet (no store), the application
+starts with setup, filled in from the config file if there is one. It asks
+three things: the mailbox file (checked to exist and to look like an mbox; a
+folder, a Takeout folder or a zip file is refused with what to point at
+instead), your name variants (empty turns passenger filtering off and keeps
+every booking), and Quick or Thorough. Ctrl-S writes them to the config file,
+which is created if needed; every other setting, comment and section in it is
+left as it was. Setup then checks the model server: a server that is not
+running or too old is shown with the same message as the commands and `c`
+checks again; a missing model is shown with its approximate size, and `d`
+downloads it through Ollama after you confirm, with a progress bar (quitting
+during a download is fine: Ollama keeps the partial download). When
+everything is ready, `s` starts the run. There is no settings screen:
+changing a setting means starting fresh.
+
+**Later launches: resume or start fresh.** When a session exists, the
+application describes it (the mailbox and whether it is still there, how far
+each stage got, the threshold in use, when it last ran, whether it is
+complete) and asks: `r` resumes (an unfinished run carries on; a finished one
+goes on to its results), `f` starts fresh. Starting fresh asks once, listing
+what would be lost and what is kept, deletes what `run --fresh` deletes, and
+shows setup with your previous answers filled in.
+
+The same steps are available as commands, for scripts:
+
+```
+uv run flighty-exporter setup --mailbox PATH [--name NAME ...] [--thoroughness quick|thorough] [--check]
+uv run flighty-exporter pull-models [--yes]
+```
+
+`setup` checks and writes the three answers exactly as the setup screen does
+(nothing is written if one is refused; a mailbox inside the config file's
+folder is written as a relative path), and with `--check` then reports
+whether the model server is ready: on this machine, reachable, version, and
+each model pulled or missing with its approximate size (exit status 1 if not
+ready). `pull-models` lists the configured models the server lacks with
+their approximate sizes (`nimble` about 9.3 GB, `gemma4:12b-it-q4_K_M` about
+8 GB; other models' sizes are not known until the download starts), and with
+`--yes` downloads them through the server, printing progress. Both honour
+the same locality rule, and take `--allow-remote` like the model commands.
 
 Outside a terminal (piped, or run from a script), the bare command prints the
 usage line and exits with status 2, as before.
@@ -871,12 +911,12 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 | Folder | What lives there |
 |---|---|
 | `mail/` | Turning an mbox into readable messages: `reader` (MIME), `html_text`, `pdf_text`, and `markup` (machine-readable flight data). The only place that knows about MIME, HTML, PDFs or calendar files. |
-| `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, and `connection` (the shared HTTP opener and the errors that stop a pass). |
+| `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, `pull` (downloading a model through the server), and `connection` (the shared HTTP opener and the errors that stop a pass). |
 | `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
 | `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
 | `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `export`, and `openflights` (the import file format and reference data). |
-| `app/` | The full-screen application the bare command opens (Textual): `shell` (the application and moving between screens), `runner` (runs the engine on a thread and turns its events into messages) and `screens/` (one module per screen). Draws what the engine reports; no pipeline logic. |
-| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), `thorough` (what a Thorough run does after its audit), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
+| `app/` | The full-screen application the bare command opens (Textual): `shell` (the application and moving between screens), `runner` (runs the engine on a thread and turns its events into messages), `background` (setup's server check and model downloads on threads) and `screens/` (one module per screen). Draws what the engine reports; no pipeline logic. |
+| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), `thorough` (what a Thorough run does after its audit), `setup` (checking guided setup's answers and writing them to the config file), `readiness` (the model server's readiness as data), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
 | top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, `tables` (CSV writing and message dates shared by audit, review and export), and `threshold` (the session's effective threshold). |
 
 The dependency rule, enforced by `tests/test_layout.py`:
