@@ -44,7 +44,10 @@ messages and press `q`.
    says "The run is complete. Resuming opens its review." and the `r` line
    reads "open the finished run's review" (`session` prints "run finished:
    yes"). Press `r`: the review screen opens at once, with no progress
-   screen and no model request, showing your saved decisions.
+   screen and no model request, showing your saved decisions. If some
+   likely flight emails could not be read, the extract line says how many
+   and a line under "The run is complete." says the review lists them (`x`);
+   the session still counts as finished.
 4. **Complete but not finished.** Start a Thorough session and quit during
    the audit stage. Launch: the prompt says "The run did not reach its end"
    (`session` prints "state: complete" but "run finished: no"); `r` opens

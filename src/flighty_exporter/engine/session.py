@@ -36,7 +36,7 @@ from pathlib import Path
 from ..config import Config
 from ..output.export import ExportError, refresh_manual_add
 from ..output.review import build_flight_list
-from ..store import Store
+from ..store import EXTRACT_PASS, Store
 from ..threshold import effective_threshold
 
 # Session values.
@@ -100,6 +100,9 @@ class SessionDescription:
     files: tuple[WrittenFile, ...]  # recorded as written and still present
     files_known: bool  # False for an older store: files written before recording began are unknown
     would_lose: tuple[str, ...]  # plain-language lines: what starting fresh would lose
+    # Candidates without an extraction whose last extraction attempt failed
+    # (retried on every run).
+    extraction_failed: int = 0
 
     @property
     def still_to_extract(self) -> int:
@@ -107,13 +110,15 @@ class SessionDescription:
 
     @property
     def finished(self) -> bool:
-        """The run reached its end: complete, and the review table it writes
-        last is recorded and still there. ``complete`` alone cannot tell a
-        run stopped early in classify (no candidates yet) or during a
-        Thorough audit from a finished one, since the store does not know the
-        mailbox's size; resuming a finished session opens its review without
-        running the engine, so it must be sure."""
-        return self.complete and any(f.kind == REVIEW_TABLE for f in self.files)
+        """The run reached its end: something was classified, every candidate
+        was extracted or failed to be, and the review table the run writes
+        last is recorded and still there. Without the review table this
+        cannot tell a run stopped early in classify (no candidates yet) or
+        during a Thorough audit from a finished one, since the store does not
+        know the mailbox's size; resuming a finished session opens its review
+        without running the engine, so it must be sure."""
+        handled = self.classified + self.resolved_from_markup > 0 and self.still_to_extract == self.extraction_failed
+        return handled and any(f.kind == REVIEW_TABLE for f in self.files)
 
 
 @dataclass
@@ -210,7 +215,11 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
         threshold = value(STARTED_THRESHOLD)
         threshold_used = effective_threshold(config, store)
         candidates = store.extraction_candidates(config.decision_model, threshold_used)
-        extracted = len(set(candidates) & store.extracted_ids(config.extraction_model))
+        extracted_ids = store.extracted_ids(config.extraction_model)
+        extracted = len(set(candidates) & extracted_ids)
+        extraction_failed = sum(
+            1 for mid in set(candidates) - extracted_ids if store.failure_reason(mid, EXTRACT_PASS) is not None
+        )
         classified = len(store.classified_ids(config.decision_model))
         markup = len(store.markup_ids())
         # An empty download address: the cached reference data is used if
@@ -238,6 +247,7 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
             resolved_from_markup=markup,
             candidates=len(candidates),
             extracted=extracted,
+            extraction_failed=extraction_failed,
             flights=len(flight_list.flights),
             flights_with_decision=sum(1 for reviewed in flight_list.flights if reviewed.decision is not None),
             complete=(classified + markup) > 0 and extracted == len(candidates),
@@ -342,6 +352,7 @@ def format_description(description: SessionDescription) -> str:
         f"  resolved from machine-readable data: {d.resolved_from_markup}",
         f"  at or above the threshold:  {d.candidates}",
         f"  extracted:                  {d.extracted} of {d.candidates}",
+        f"  extraction failed:          {d.extraction_failed}",
         f"  flights:                    {d.flights}",
         f"  flights with a saved decision: {d.flights_with_decision}",
         f"  state:                      {state}",

@@ -398,3 +398,23 @@ def test_a_finished_run_whose_review_table_was_deleted_is_not_finished(workspace
     (workspace.root / "review.csv").unlink()
 
     assert value(session(workspace), "run finished") == "no (resuming runs the remaining stages)"
+
+
+def test_a_run_that_reached_review_with_an_email_that_cannot_be_read_is_finished(workspace):
+    """A message whose extraction keeps failing is retried on every run, but
+    the run did reach its end: resuming opens the review."""
+    run(workspace, "--mailbox", str(mailbox(workspace)))
+
+    text = session(workspace)
+
+    assert value(text, "extracted") == "2 of 3"
+    assert value(text, "extraction failed") == "1"
+    assert value(text, "run finished") == "yes (resuming opens the review)"
+
+
+def test_an_extraction_failure_alone_does_not_make_a_run_finished(workspace):
+    mbox = mailbox(workspace)
+    for command in ("classify", "extract"):
+        assert workspace.run(command, "--mailbox", str(mbox)).returncode == 0
+
+    assert value(session(workspace), "run finished") == "no (resuming runs the remaining stages)"

@@ -61,7 +61,10 @@ def describe_lines(d: SessionDescription) -> list[str]:
         f"  classify   {read:,} of {d.messages:,} recorded emails read"
         + (f" ({d.resolved_from_markup:,} from machine-readable flight data)" if d.resolved_from_markup else "")
     )
-    lines.append(f"  extract    {d.extracted:,} of {d.candidates:,} likely flight emails extracted")
+    lines.append(
+        f"  extract    {d.extracted:,} of {d.candidates:,} likely flight emails extracted"
+        + (f" ({d.extraction_failed:,} could not be read)" if d.extraction_failed else "")
+    )
     lines.append(f"  review     {d.flights:,} flights, {d.flights_with_decision:,} with a saved decision")
     threshold = f"{d.threshold_used:g}"
     if d.threshold_used < d.threshold_configured:
@@ -74,7 +77,12 @@ def describe_lines(d: SessionDescription) -> list[str]:
     lines.append("")
     if d.finished:
         lines.append("[green]The run is complete.[/green] Resuming opens its review.")
-    elif d.complete:
+        if d.extraction_failed:
+            lines.append(
+                f"{d.extraction_failed:,} likely flight email{'' if d.extraction_failed == 1 else 's'} could not "
+                "be read; the review lists them (x), and the next run of the pipeline tries them again."
+            )
+    elif d.complete or (read and d.still_to_extract == d.extraction_failed):
         lines.append(
             "[yellow]The run did not reach its end[/yellow] (it stopped before review). Resuming runs the "
             "remaining stages; nothing finished is sent to a model again."
@@ -84,7 +92,8 @@ def describe_lines(d: SessionDescription) -> list[str]:
     else:
         lines.append(
             f"[yellow]The run is unfinished:[/yellow] {d.still_to_extract:,} likely flight "
-            f"email{'' if d.still_to_extract == 1 else 's'} still to extract. Resuming carries on where it stopped; nothing finished is sent to a model again."
+            f"email{'' if d.still_to_extract == 1 else 's'} still to extract. Resuming carries on where it "
+            "stopped; nothing finished is sent to a model again."
         )
     if d.mailbox is not None and not d.mailbox_exists and d.finished:
         lines.append("")
