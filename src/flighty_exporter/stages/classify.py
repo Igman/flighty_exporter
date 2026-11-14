@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
@@ -52,6 +53,7 @@ def run_classify(
     store: Store,
     client: DecisionClient,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> ClassifySummary:
     """Run the pass. KeyboardInterrupt and OllamaUnreachable propagate after
     the summary so far is attached to the exception as ``summary``."""
@@ -59,7 +61,7 @@ def run_classify(
     summary = ClassifySummary(total=len(mbox))
     done = store.classified_ids(config.decision_model)
     resolved = store.markup_ids()
-    progress = Progress(summary.total, "classify", progress_stream)
+    progress = Progress(summary.total, "classify", progress_stream, on_progress, summary)
     try:
         for entry in mbox:
             if isinstance(entry, Skipped):

@@ -1,7 +1,9 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
-``extract``, ``review``, ``audit`` and ``export``.
+``extract``, ``review``, ``audit`` and ``export``; ``run`` performs
+classify, extract and review in one go through the run engine (see
+``engine.pipeline``) and prints its events.
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
@@ -12,6 +14,7 @@ to the store are held, so a failed check leaves the store as it was.
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -19,7 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
+from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
+from .engine.report import format_report
 from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
@@ -34,6 +40,7 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
+EXIT_STOPPED = 143  # run asked to stop (SIGTERM) between messages
 
 
 class UsageError(Exception):
@@ -266,6 +273,109 @@ COMMANDS["export"] = (
     "turn the kept rows of the edited review table into an import file for Flighty and a manual-add list",
     _export_arguments,
     cmd_export,
+)
+
+
+RUN_RESUME = "Progress so far is saved; rerun run to resume."
+
+
+class _RunPrinter:
+    """Prints the run engine's events the way the single commands print
+    their passes: a start line and the pass's own summary for each stage
+    (the passes print their progress lines themselves), problems and
+    warnings on stderr, then the end-of-run report."""
+
+    def __init__(self, config: Config, store_path: Path):
+        self.config = config
+        self.store_path = store_path
+
+    def __call__(self, event: Event) -> None:
+        if isinstance(event, StageStarted):
+            print(f"Starting {event.stage}.")
+        elif isinstance(event, StageFinished) and event.summary is not None:
+            self._summary(event)
+            print()
+        elif isinstance(event, Notice):
+            _warn(event.message)
+        elif isinstance(event, Problem):
+            print(f"error: {event.message}", file=sys.stderr)
+        elif isinstance(event, RunFinished):
+            print(format_report(event.report))
+
+    def _summary(self, event: StageFinished) -> None:
+        if event.stage in (CLASSIFY, EXTRACT):
+            formatter = format_summary if event.stage == CLASSIFY else extract.format_summary
+            with Store(self.store_path) as store:
+                print(formatter(event.summary, self.config, store))
+            return
+        if event.note:
+            print(f"Review table {event.summary.review_path}: {event.note}.")
+            print(f"Failures file written to {event.summary.failures_path}")
+        else:
+            print(review.format_summary(event.summary))
+        for warning in review.format_warnings(event.summary):
+            _warn(warning)
+
+
+def cmd_run(args: argparse.Namespace, config: Config) -> int:
+    mailbox_path = _mailbox_path(args, config)
+    store_path = _store_path(args, config)
+    stop_requested: list[int] = []
+    # SIGTERM asks the run to stop after the message in progress.
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop_requested.append(signum))
+    try:
+        result = run_pipeline(
+            config,
+            mailbox_path,
+            store_path,
+            allow_remote=args.allow_remote,
+            thoroughness=args.thoroughness,
+            review_path=Path(args.output).expanduser() if args.output else None,
+            failures_path=Path(args.failures).expanduser() if args.failures else None,
+            force=args.force,
+            subscriber=_RunPrinter(config, store_path),
+            should_stop=lambda: bool(stop_requested),
+        )
+    except RunError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        print(f"Interrupted. {RUN_RESUME}", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    if result.state == STOPPED_BY_PROBLEM:
+        if result.problem is not None and result.problem.kind == UNREACHABLE:
+            print(RUN_RESUME, file=sys.stderr)
+        return EXIT_ERROR
+    if result.state == STOPPED_ON_REQUEST:
+        print(f"Stopped. {RUN_RESUME}", file=sys.stderr)
+        return EXIT_STOPPED
+    return EXIT_OK
+
+
+def _run_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--mailbox", help="mbox file to read (overrides `mailbox` in config)")
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    _allow_remote_argument(parser)
+    parser.add_argument(
+        "--thoroughness",
+        choices=("quick", "thorough"),
+        help="how hard to look for flight emails the first filter missed (overrides [run] thoroughness); "
+        "quick runs no audit",
+    )
+    parser.add_argument("--output", help="review CSV to write (overrides [review] output in config)")
+    parser.add_argument("--failures", help="failures CSV to write (overrides [review] failures in config)")
+    parser.add_argument(
+        "--force", action="store_true", help="regenerate the review CSV even if it has been edited"
+    )
+
+
+COMMANDS["run"] = (
+    "run classify, extract and review in one go, resuming where an earlier run stopped, with progress and "
+    "an end-of-run report",
+    _run_arguments,
+    cmd_run,
 )
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
@@ -53,6 +54,7 @@ def run_extract(
     store: Store,
     client: ExtractionClient,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> ExtractSummary:
     """Run the pass. KeyboardInterrupt and OllamaUnreachable propagate after
     the summary so far is attached to the exception as ``summary``."""
@@ -61,7 +63,7 @@ def run_extract(
     summary = ExtractSummary(selected=len(candidates))
     pending = {identifier for identifier in candidates if identifier not in done}
     summary.already_extracted = len(candidates) - len(pending)
-    extract_messages(mailbox_path, pending, store, client, summary, PASS_NAME, progress_stream)
+    extract_messages(mailbox_path, pending, store, client, summary, PASS_NAME, progress_stream, on_progress)
     return summary
 
 
@@ -73,6 +75,7 @@ def extract_messages(
     summary: ExtractSummary,
     label: str = PASS_NAME,
     progress_stream: TextIO | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> None:
     """Send the ``pending`` messages to the extraction model and store each
     result as the extract pass does (records, failures, attachment notes), so
@@ -84,7 +87,7 @@ def extract_messages(
     if not pending:
         return
     mbox = Mailbox(mailbox_path, read_pdfs=True)
-    progress = Progress(len(pending), label, progress_stream)
+    progress = Progress(len(pending), label, progress_stream, on_progress, summary)
     try:
         for entry in mbox:
             if not isinstance(entry, Message) or entry.identifier not in pending:
