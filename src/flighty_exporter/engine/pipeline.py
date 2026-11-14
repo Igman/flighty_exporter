@@ -25,10 +25,9 @@ Thoroughness: Quick runs no audit. Thorough is not available yet.
 from __future__ import annotations
 
 import copy
-import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
@@ -36,7 +35,7 @@ from ..config import QUICK, Config
 from ..ollama.connection import OllamaUnreachable, PreflightError
 from ..ollama.decision import DecisionClient
 from ..ollama.extraction import ExtractionClient
-from ..output.review import ReviewExists, ReviewSummary, write_review
+from ..output.review import ReviewExists, ReviewSummary, write_review, write_review_without_table
 from ..progress import Progress
 from ..stages.classify import ClassifySummary, run_classify
 from ..stages.extract import ExtractSummary, run_extract
@@ -194,8 +193,9 @@ class _Run:
 
     def review(self, review_path: Path, failures_path: Path, force: bool) -> tuple[ReviewSummary, bool]:
         """Write the review table and failures file. An edited review table
-        is left as it is (unless ``force``): the flights are then
-        consolidated into a scratch table, only for the report."""
+        is left as it is (unless ``force``): the flights are then only
+        counted for the report, from the same decision-aware flight list,
+        and nothing is recorded for a table that was not written."""
         self._check_stop()
         self.emit(StageStarted(REVIEW, None))
         with Store(self.store_path) as store:
@@ -203,9 +203,7 @@ class _Run:
                 summary = write_review(self.config, store, review_path, failures_path, force)
                 left = False
             except ReviewExists:
-                with tempfile.TemporaryDirectory() as scratch:
-                    summary = write_review(self.config, store, Path(scratch) / review_path.name, failures_path, True)
-                summary = replace(summary, review_path=review_path)
+                summary = write_review_without_table(self.config, store, review_path, failures_path)
                 left = True
         self.emit(StageFinished(REVIEW, DONE, summary, REVIEW_TABLE_LEFT if left else None))
         return summary, left

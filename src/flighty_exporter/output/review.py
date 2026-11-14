@@ -156,9 +156,29 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
             )
     built = build_flight_list(config, store)
     discarded = discard_stale_decisions(store, built)
+    write_csv(review_path, REVIEW_COLUMNS, [_row(reviewed) for reviewed in built.flights])
+    store.record_review_table(review_path, file_hash(review_path))
+    write_csv(failures_path, FAILURE_COLUMNS, built.failures)
+    return review_summary(config, built, review_path, failures_path, discarded)
+
+
+def write_review_without_table(config: Config, store: Store, review_path: Path, failures_path: Path) -> ReviewSummary:
+    """For a review table at ``review_path`` that is left as it is (it was
+    edited): what ``write_review`` does, except that no review table is
+    written or recorded. The failures file is written, stale decisions are
+    discarded, and the summary is the one ``write_review`` would return."""
+    built = build_flight_list(config, store)
+    discarded = discard_stale_decisions(store, built)
+    write_csv(failures_path, FAILURE_COLUMNS, built.failures)
+    return review_summary(config, built, review_path, failures_path, discarded)
+
+
+def review_summary(
+    config: Config, built: FlightList, review_path: Path, failures_path: Path, decisions_discarded: int = 0
+) -> ReviewSummary:
+    """The review summary of a flight list; writes nothing."""
     result, sources, failures = built.consolidation, built.sources, built.failures
-    unread_attachments, codes_not_checked = built.unread_attachments, built.codes_not_checked
-    rows = [_row(reviewed) for reviewed in built.flights]
+    unread_attachments = built.unread_attachments
     flights = [reviewed.flight for reviewed in built.flights]
 
     reasons: Counter[str] = Counter()
@@ -170,13 +190,10 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
             if kind in (UNKNOWN_AIRPORT, UNKNOWN_AIRLINE):
                 unknown_codes.setdefault(kind, set()).add(reason[len(kind) + 1:])
 
-    write_csv(review_path, REVIEW_COLUMNS, rows)
-    store.record_review_table(review_path, file_hash(review_path))
-    write_csv(failures_path, FAILURE_COLUMNS, failures)
     return ReviewSummary(
         review_path,
         failures_path,
-        flights=len(rows),
+        flights=len(flights),
         confirmed=sum(1 for f in flights if f.evidence == CONFIRMED),
         booked_only=sum(1 for f in flights if f.evidence == BOOKED_ONLY),
         bookings_cancelled=result.bookings_cancelled,
@@ -190,9 +207,9 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
         not_kept=sum(1 for f in flights if f.blocked),
         reasons=reasons,
         unknown_codes={kind: sorted(codes) for kind, codes in unknown_codes.items()},
-        codes_not_checked=codes_not_checked,
+        codes_not_checked=built.codes_not_checked,
         dropped_bookings=result.dropped_bookings,
-        decisions_discarded=discarded,
+        decisions_discarded=decisions_discarded,
     )
 
 

@@ -205,9 +205,11 @@ uv run flighty-exporter run
 `run` performs classify, extract and review in that order, printing each
 stage's start, its usual progress and summary, and then an end-of-run report:
 flights found, how many need attention and why, bookings cancelled, replaced
-and dropped as other passengers', messages that failed in each stage, PDFs
-not read, where each file was written, and the next step (check the review
-table, then run `export`). It takes `--mailbox`, `--store`, `--allow-remote`,
+and dropped as other passengers', saved decisions discarded because their
+flight is no longer produced (when there are any), messages that failed in
+each stage, PDFs not read, where each file was written, and the next step
+(check the review table, then run `export`). Its review step is `review`'s:
+the table reflects your saved decisions. It takes `--mailbox`, `--store`, `--allow-remote`,
 review's `--output`, `--failures` and `--force`, and `--thoroughness`
 (`quick`, the default, runs no audit; `thorough` is not available yet).
 

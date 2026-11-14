@@ -5,11 +5,15 @@ is invented."""
 from __future__ import annotations
 
 import signal
+import sqlite3
 import threading
 
 from fake_ollama import Chat, Decision
 from mailbox_fixtures import FLIGHT_BODY, email, image_only_pdf, write_mbox
 from test_consolidation import ROBIN, SAM, record, seg
+from test_decisions import DISCARDED, GOOD, OTHER, edit_review, rows_by_id
+from test_decisions import export as export_from_table
+from test_export import data_rows, the_import_file
 from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT
 from test_markup import flight_reservation, json_ld_html, markup_email
 from test_preflight import dead_address
@@ -403,3 +407,85 @@ def test_an_edited_review_table_is_left_as_it_is_and_the_report_still_counts_the
 
     assert review_csv.read_bytes() != edited
     assert f"  review table: {review_csv}" in forced.stdout
+
+
+def test_an_edited_review_table_left_as_it_is_records_no_other_table(workspace):
+    mbox = report_mailbox(workspace)
+    run(workspace, "--mailbox", str(mbox))
+    review_csv = workspace.root / "review.csv"
+    review_csv.write_bytes(review_csv.read_bytes().replace(b"yes,", b"no,", 1))
+
+    run(workspace, "--mailbox", str(mbox))
+
+    with sqlite3.connect(workspace.root / "flighty_exporter.db") as db:
+        recorded = [path for (path,) in db.execute("SELECT path FROM review_tables")]
+    assert recorded == [str(review_csv.resolve())]
+
+
+# -- review decisions, sources and export after run ------------------------------------------
+
+
+def decisions_mailbox(workspace):
+    """Two invented bookings, as the review decisions tests use them."""
+    mails = [GOOD, OTHER]
+    for m in mails:
+        workspace.ollama.decisions[m.subject] = Decision(0.9, m.email_type)
+        workspace.ollama.chats[m.subject] = Chat(m.record)
+    return write_mbox(workspace.root / "mail.mbox",
+                      [email(m.subject, "Invented email.\n", date=m.header_date) for m in mails])
+
+
+def test_run_writes_the_table_with_saved_decisions_and_reports_the_ones_discarded(workspace):
+    mbox = decisions_mailbox(workspace)
+    first = run(workspace, "--mailbox", str(mbox))
+    assert DISCARDED not in first.stdout[first.stdout.index("Run finished."):]
+    edit_review(workspace, lambda rows: rows["2025-06-01 QQ410"].update(keep="no"))
+    export_from_table(workspace)
+    # A decision for a flight no run produces.
+    assert workspace.run("mark-added", "2001-01-01", "ZZ1").returncode == 0
+
+    result = run(workspace, "--mailbox", str(mbox), "--force")
+
+    rows = rows_by_id(workspace.root / "review.csv")
+    assert [rows[k]["keep"] for k in ("2025-05-12 ZZ1234", "2025-06-01 QQ410")] == ["yes", "no"]
+    report = result.stdout[result.stdout.index("Run finished."):]
+    assert f"  {DISCARDED}: 1" in report.splitlines()
+    again = run(workspace, "--mailbox", str(mbox))
+    assert DISCARDED not in again.stdout[again.stdout.index("Run finished."):]
+    assert rows_by_id(workspace.root / "review.csv")["2025-06-01 QQ410"]["keep"] == "no"
+
+
+def test_run_then_sources_and_export_from_the_store(workspace):
+    mbox = decisions_mailbox(workspace)
+    run(workspace, "--mailbox", str(mbox))
+    mbox.unlink()
+
+    listing = workspace.run("sources")
+    assert listing.returncode == 0, listing.stderr
+    assert [line for line in listing.stdout.splitlines() if line and not line.startswith(" ")] == [
+        "2025-05-12  ZZ1234  LIS-OSL", "2025-06-01  QQ410  AMS-KEF",
+    ]
+    assert listing.stdout.count("    | Invented email.") == 2
+
+    from_csv = export_from_table(workspace, "--output-dir", "from-csv")
+    (workspace.root / "review.csv").unlink()
+    from_store = export_from_table(workspace, "--from-store", "--output-dir", "from-store")
+
+    assert "flights exported:           2" in from_csv.stdout and "flights exported:           2" in from_store.stdout
+    assert data_rows(the_import_file(workspace.root / "from-store")) == data_rows(
+        the_import_file(workspace.root / "from-csv")
+    )
+
+
+def test_run_locates_messages_when_positions_are_missing_and_reports_progress(workspace):
+    subjects, mbox = itineraries(workspace, count=3)
+    assert workspace.run("classify", "--mailbox", str(mbox)).returncode == 0
+    with sqlite3.connect(workspace.root / "flighty_exporter.db") as db:
+        db.execute("UPDATE messages SET mbox_offset = NULL")
+
+    result = run(workspace, "--mailbox", str(mbox))
+
+    assert "extract: locating messages: 3/3 (100%)" in result.stderr
+    assert "extract: 3/3" in result.stderr
+    assert sorted(workspace.ollama.extracted_subjects()) == sorted(subjects)
+    assert "Run finished." in result.stdout

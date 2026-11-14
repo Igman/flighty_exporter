@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..flights.consolidate import NO_PASSENGER_NAMED
 from ..flights.validate import REASON_KINDS
-from ..output.review import ReviewSummary
+from ..output.review import DECISIONS_DISCARDED, ReviewSummary
 from ..stages.classify import ClassifySummary
 from ..stages.extract import ExtractSummary
 
@@ -57,6 +57,10 @@ def format_report(report: RunReport) -> str:
         f"  bookings cancelled:         {review.bookings_cancelled}",
         f"  bookings with replaced segments: {review.bookings_replaced}",
         f"  bookings for other passengers (dropped): {len(review.dropped_bookings)}",
+    ]
+    if review.decisions_discarded:
+        lines.append(f"  {DECISIONS_DISCARDED}: {review.decisions_discarded}")
+    lines += [
         "  messages that failed:",
         f"    classify:                 {report.classify.failed}",
         f"    extract:                  {report.extract.failed + report.extract.not_in_mailbox}",
