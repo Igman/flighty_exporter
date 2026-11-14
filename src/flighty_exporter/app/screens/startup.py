@@ -57,13 +57,12 @@ def describe_lines(d: SessionDescription) -> list[str]:
     lines.append(f"[b]Thoroughness[/b]  {escape(d.thoroughness or 'unknown')}")
     lines.append("")
     lines.append("[b]How far it got[/b]")
-    read = d.classified + d.resolved_from_markup
     details = []
     if d.resolved_from_markup:
         details.append(f"{d.resolved_from_markup:,} from machine-readable flight data")
-    if d.messages > read:
-        details.append(f"{d.messages - read:,} not classified yet")
-    lines.append(f"  classify   {read:,} emails read" + (f" ({'; '.join(details)})" if details else ""))
+    if d.not_classified:
+        details.append(f"{d.not_classified:,} not classified yet")
+    lines.append(f"  classify   {d.read:,} emails read" + (f" ({'; '.join(details)})" if details else ""))
     lines.append(f"             ({escape(session.NOT_COUNTED)})")
     lines.append(
         f"  extract    {d.extracted:,} of {d.candidates:,} likely flight emails extracted"
@@ -79,25 +78,13 @@ def describe_lines(d: SessionDescription) -> list[str]:
         files += " (files written before this store recorded them are not known)"
     lines.append(f"  files      {files}")
     lines.append("")
-    if d.finished:
-        lines.append("[green]The run is complete.[/green] Resuming opens its review.")
-        if d.extraction_failed:
-            lines.append(
-                f"{d.extraction_failed:,} likely flight email{'' if d.extraction_failed == 1 else 's'} could not "
-                "be read; the review lists them (x), and the next run of the pipeline tries them again."
-            )
-    elif d.complete or (read and d.still_to_extract == d.extraction_failed):
+    state = d.state
+    colour = "green" if state.value == session.FINISHED else "yellow"
+    lines.append(f"[{colour}]{escape(state.headline)}[/{colour}] {escape(state.detail)}")
+    if state.value == session.FINISHED and d.extraction_failed:
         lines.append(
-            "[yellow]The run did not reach its end[/yellow] (it stopped before review). Resuming runs the "
-            "remaining stages; nothing finished is sent to a model again."
-        )
-    elif read == 0:
-        lines.append("[yellow]The run is unfinished:[/yellow] nothing has been classified yet.")
-    else:
-        lines.append(
-            f"[yellow]The run is unfinished:[/yellow] {d.still_to_extract:,} likely flight "
-            f"email{'' if d.still_to_extract == 1 else 's'} still to extract. Resuming carries on where it "
-            "stopped; nothing finished is sent to a model again."
+            f"{d.extraction_failed:,} likely flight email{'' if d.extraction_failed == 1 else 's'} could not "
+            "be read; the review lists them (x), and the next run of the pipeline tries them again."
         )
     if d.mailbox is not None and not d.mailbox_exists and d.finished:
         lines.append("")

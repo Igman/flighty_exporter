@@ -153,6 +153,23 @@ def test_below_threshold_flight_emails_within_the_budget_lower_the_threshold_for
     assert workspace.config_path.read_bytes() == config
 
 
+def test_audit_and_include_end_with_their_totals_as_the_progress_screen_shows_them(workspace):
+    configure(workspace, "\n[audit]\nsample_size = 1\n")
+    mbox = low_band_mailbox(workspace)
+
+    result = run(workspace, mbox, "--thoroughness", "thorough")
+
+    totals = [line for line in result.stdout.splitlines() if line.startswith("Session totals so far:")]
+    assert totals == [
+        "Session totals so far: classified 5 · resolved from machine-readable data 0 · skipped 0 · failed 0",
+        "Session totals so far: extracted 1 of 1 · failed 0",
+        # One sampled per band; the one above the threshold was extracted already (reused).
+        "Session totals so far: sampled 3 · extracted 3 of 3 · failed 0",
+        # Three newly included: one the audit had read, two read now.
+        "Session totals so far: extracted 3 of 3 · flight emails 3 · failed 0",
+    ]
+
+
 def test_later_commands_on_the_session_use_the_lowered_threshold(workspace):
     configure(workspace, "\n[audit]\nsample_size = 1\n")
     mbox = low_band_mailbox(workspace)

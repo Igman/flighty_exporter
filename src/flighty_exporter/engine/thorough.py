@@ -33,7 +33,7 @@ from ..ollama.extraction import ExtractionClient
 from ..progress import Progress
 from ..stages.audit import SECTION_ALL, SECTION_PDF, AuditResult, band_of
 from ..stages.extract import ExtractSummary, extract_messages
-from ..stages.summary import failure_lines
+from ..stages.summary import Total, failure_lines
 from ..store import Store
 from ..threshold import effective_threshold
 
@@ -62,6 +62,19 @@ class IncludeSummary:
     with_flights: int = 0
     messages: list[str] = field(default_factory=list, repr=False)  # the range's messages
     pending: list[str] = field(default_factory=list, repr=False)  # the ones to extract
+
+    def session_totals(self) -> list[Total]:
+        """The newly included range's totals, once the threshold was lowered
+        (nothing otherwise): messages the audit or earlier runs extracted
+        count as extracted."""
+        if self.outcome != LOWERED:
+            return []
+        return [
+            Total("extracted", self.already_extracted + self.extraction.extracted,
+                  self.would_add + self.already_extracted),
+            Total("flight emails", self.with_flights),
+            Total("failed", self.extraction.failed_total),
+        ]
 
 
 def plan_include(config: Config, store: Store, audit: AuditResult) -> IncludeSummary:
@@ -133,7 +146,7 @@ def outcome_text(summary: IncludeSummary) -> str:
     ex = summary.extraction
     read_now = ex.extracted or "none"
     how = [f"{summary.already_extracted} already read by the check", f"{read_now} read now"]
-    failed = ex.failed + ex.not_in_mailbox
+    failed = ex.failed_total
     if failed:
         how.append(f"{failed} could not be read")
     included = len(summary.messages)
@@ -160,7 +173,7 @@ def format_include(summary: IncludeSummary, stopped: bool) -> str:
         f"  newly included (gate >= {summary.suggested:g}, below {summary.threshold:g}): {len(summary.messages)}",
         f"  already extracted:    {summary.already_extracted}",
         f"  extracted:            {ex.extracted}",
-        f"  failed:               {ex.failed + ex.not_in_mailbox}",
+        f"  failed:               {ex.failed_total}",
     ]
     lines += failure_lines(ex.failures)
     return "\n".join(lines)

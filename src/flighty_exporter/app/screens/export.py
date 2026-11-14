@@ -2,8 +2,8 @@
 manual-add checklist.
 
 It holds no export logic: the plan comes from ``export.plan_store_export``,
-the files from ``export.run_store_export`` (recorded with the session as the
-``export`` command records them), ticks go through
+the files from ``session.export_from_store`` (which records them with the
+session, as the ``export`` command does), ticks go through
 ``session.tick_manual_add`` (which refreshes the manual-add list on disk),
 and the import steps are ``export.FLIGHTY_IMPORT_STEPS``. What the screen
 owns is view state: what it is doing, the checklist it last drew and the
@@ -54,10 +54,6 @@ STATUS = {
 }
 
 CHECK_HELP = "Space ticks the selected flight once you have entered it in Flighty; ticks are saved at once."
-
-
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
 class ExportScreen(Screen):
@@ -145,11 +141,7 @@ class ExportScreen(Screen):
     def _export(self) -> None:
         try:
             with Store(self.config.store) as store:
-                summary = export.run_store_export(
-                    self.config, store, self.config.export_output_dir, self.config.export_data_dir,
-                    self.config.export_data_url,
-                )
-                session.record_export(store, summary.import_path, summary.manual_add_path)
+                summary = session.export_from_store(self.config, store, self.config.export_output_dir)
         except (ReferenceDataError, export.ExportError, OSError) as exc:
             self.app.call_from_thread(self._failed, str(exc))
             return
@@ -159,14 +151,7 @@ class ExportScreen(Screen):
 
     def _show_plan(self, plan: export.ExportPlan) -> None:
         kept = len(plan.exported) + len(plan.manual_add)
-        lines = [
-            f"{_plural(len(plan.exported), 'flight')} will be exported to the import file for Flighty.",
-            f"{_plural(len(plan.manual_add), 'flight')} must be added by hand in Flighty.",
-            f"{_plural(plan.not_kept, 'flight')} {'is' if plan.not_kept == 1 else 'are'} not kept.",
-        ]
-        if plan.invalid:
-            lines.append(f"{_plural(len(plan.invalid), 'flight')} cannot be exported (no date or airport).")
-        self.query_one("#plan", Static).update(escape("\n".join(lines)))
+        self.query_one("#plan", Static).update(escape("\n".join(export.plan_sentences(plan))))
         self.query_one("#plan").display = True
         self.entries = list(plan.manual_add)
         if kept == 0:
@@ -180,11 +165,7 @@ class ExportScreen(Screen):
         self.import_path = summary.import_path
         self.manual_add_path = summary.manual_add_path
         self.entries = list(summary.manual_add_entries)
-        lines = [
-            f"{_plural(summary.exported, 'flight')} exported; {_plural(summary.manual_add, 'flight')} to add by hand; "
-            f"{summary.not_kept} not kept.",
-        ]
-        self.query_one("#plan", Static).update(escape("\n".join(lines)))
+        self.query_one("#plan", Static).update(escape(export.export_sentence(summary)))
         self.query_one("#problem").display = False
         written = self.query_one("#written", Static)
         if summary.import_path is None:

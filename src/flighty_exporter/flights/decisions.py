@@ -40,6 +40,9 @@ from .validate import CodeLookup, check_flights, normalise_airport, normalise_fl
 
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
+# How a flight without a flight number is named where its number would be shown.
+NO_FLIGHT_NUMBER = "(no flight number)"
+
 
 @dataclass(frozen=True)
 class ReviewDecision:

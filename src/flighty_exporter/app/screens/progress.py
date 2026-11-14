@@ -16,7 +16,6 @@ opens the review (``FlightyApp.open_review``).
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 from rich.markup import escape
@@ -43,8 +42,8 @@ from ...engine.events import (
     StageStarted,
 )
 from ...engine.pipeline import FINISHED, STOPPED_ON_REQUEST
-from ...engine.report import RunReport, format_report
-from ...engine.thorough import LOWERED, IncludeSummary
+from ...engine.report import RunReport, format_report, stage_totals
+from ...engine.thorough import IncludeSummary
 from ...stages.audit import AuditResult
 from ...stages.classify import ClassifySummary
 from ...stages.extract import ExtractSummary
@@ -123,56 +122,9 @@ def progress_line(event: StageProgress) -> str:
 
 
 def summary_counts(summary: Any) -> list[str]:
-    """The counts worth showing from a stage's summary, as text.
-
-    For classify and extract they are the session's totals so far: each
-    summary counts this run's work next to what earlier runs had already
-    done ("already classified", "already extracted"), so "done so far" is
-    their sum. Failures are retried on every run, so the failed count is the
-    messages still failing. At the end of a Thorough run's audit and include
-    stages, their own summaries give the same totals (messages reused from
-    earlier extractions count as extracted); while those stages run, their
-    counts are their extraction summaries, which hold only this run's
-    extractions. Any other summary is shown generically: every numeric
-    field."""
-    if isinstance(summary, ClassifySummary):
-        return [
-            f"classified {summary.classified + summary.already_classified:,}",
-            "resolved from machine-readable data "
-            f"{summary.resolved_from_markup + summary.already_resolved_from_markup:,}",
-            f"skipped {summary.skipped:,}",
-            f"failed {summary.failed:,}",
-        ]
-    if isinstance(summary, ExtractSummary):
-        extracted = summary.extracted + summary.already_extracted
-        return [
-            f"extracted {extracted:,} of {summary.selected:,}" if summary.selected else f"extracted {extracted:,}",
-            f"failed {summary.failed + summary.not_in_mailbox:,}",
-        ]
-    if isinstance(summary, AuditResult):
-        return [
-            f"sampled {summary.sampled:,}",
-            f"extracted {summary.reused + summary.extraction.extracted:,} of {summary.sampled:,}",
-            f"failed {summary.extraction.failed + summary.extraction.not_in_mailbox:,}",
-        ]
-    if isinstance(summary, IncludeSummary):
-        if summary.outcome != LOWERED:
-            return []
-        wanted = summary.would_add + summary.already_extracted
-        return [
-            f"extracted {summary.already_extracted + summary.extraction.extracted:,} of {wanted:,}",
-            f"flight emails {summary.with_flights:,}",
-            f"failed {summary.extraction.failed + summary.extraction.not_in_mailbox:,}",
-        ]
-    if dataclasses.is_dataclass(summary):
-        values = {field.name: getattr(summary, field.name) for field in dataclasses.fields(summary)}
-    else:
-        values = dict(vars(summary)) if hasattr(summary, "__dict__") else {}
-    return [
-        f"{name.replace('_', ' ')} {value:,}"
-        for name, value in values.items()
-        if isinstance(value, int) and not isinstance(value, bool)
-    ]
+    """The counts shown for a stage's summary: the session's totals so far,
+    as the engine gives them (``engine.report.stage_totals``)."""
+    return [total.text for total in stage_totals(summary)]
 
 
 class ProgressScreen(Screen):

@@ -671,16 +671,56 @@ def format_summary(summary: ExportSummary) -> str:
     return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class PlanFigure:
+    """One figure of an export plan, with its wording: ``label`` as
+    ``export --dry-run`` prints it, ``sentence`` as the export screen says
+    it (None: the screen leaves the figure out)."""
+
+    count: int
+    label: str
+    sentence: str | None
+
+
+def plan_figures(plan: ExportPlan) -> list[PlanFigure]:
+    """The plan's figures, in order: the one source of the plan's wording."""
+    invalid = len(plan.invalid)
+    return [
+        PlanFigure(len(plan.exported), "flights to export",
+                   f"{_plural(len(plan.exported), 'flight')} will be exported to the import file for Flighty."),
+        PlanFigure(len(plan.manual_add), "flights to add by hand",
+                   f"{_plural(len(plan.manual_add), 'flight')} must be added by hand in Flighty."),
+        PlanFigure(plan.not_kept, "not kept",
+                   f"{_plural(plan.not_kept, 'flight')} {'is' if plan.not_kept == 1 else 'are'} not kept."),
+        PlanFigure(invalid, "rejected as invalid",
+                   f"{_plural(invalid, 'flight')} cannot be exported (no date or airport)." if invalid else None),
+    ]
+
+
+def plan_sentences(plan: ExportPlan) -> list[str]:
+    """The plan as the export screen says it."""
+    return [figure.sentence for figure in plan_figures(plan) if figure.sentence is not None]
+
+
+def export_sentence(summary: ExportSummary) -> str:
+    """What an export wrote, in one sentence (the export screen's)."""
+    return (
+        f"{_plural(summary.exported, 'flight')} exported; {_plural(summary.manual_add, 'flight')} to add by hand; "
+        f"{summary.not_kept} not kept."
+    )
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
 def format_plan(plan: ExportPlan) -> str:
     """What an export from the store would do (``export --from-store
     --dry-run``): the counts, the flights for the import file, and the
     manual-add list with each flight's tick ([x]) and reason."""
     lines = ["Dry run: nothing was written."]
     lines.append(f"Flight list read from the store {plan.store_path}")
-    lines.append(f"  flights to export:          {len(plan.exported)}")
-    lines.append(f"  flights to add by hand:     {len(plan.manual_add)}")
-    lines.append(f"  not kept:                   {plan.not_kept}")
-    lines.append(f"  rejected as invalid:        {len(plan.invalid)}")
+    lines += [f"  {figure.label + ':':<28}{figure.count}" for figure in plan_figures(plan)]
     for row_number, reason in plan.invalid:
         lines.append(f"    row {row_number}: {reason}")
     lines.append("Import file would hold:")

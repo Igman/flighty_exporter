@@ -22,14 +22,48 @@ store (review and export discard them).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ..config import Config
-from ..flights.decisions import ReviewedFlight, flight_key, segment_key
+from ..flights.decisions import NO_FLIGHT_NUMBER, ReviewedFlight, flight_key, segment_key
 from ..store import Store
 from .review import build_flight_list
 
 UNAVAILABLE = "source text unavailable (extracted before text was saved)"
-NO_FLIGHT_NUMBER = "(no flight number)"
 TEXT_PREFIX = "    | "
+
+
+@dataclass(frozen=True)
+class SourceEmail:
+    """One source email of a flight: its date and subject, and its saved
+    text (None when it was extracted before text was saved)."""
+
+    header: str  # "date  subject"
+    text: str | None
+
+    @property
+    def shown_text(self) -> str:
+        """The saved text, or the note that it is unavailable."""
+        return self.text if self.text is not None else UNAVAILABLE
+
+
+@dataclass(frozen=True)
+class FlightSources:
+    """A flight with its source emails, oldest first."""
+
+    heading: str  # "date  flight number  ORIGIN-DESTINATION", as the flight now shows
+    emails: list[SourceEmail]
+
+
+def flight_sources(reviewed: ReviewedFlight, store: Store, with_text: bool = True) -> FlightSources:
+    """One flight's sources, read from the store (the text only if ``with_text``)."""
+    segment = reviewed.flight.segment
+    heading = f"{segment.date}  {segment.flight_number or NO_FLIGHT_NUMBER}  {segment.origin}-{segment.destination}"
+    return FlightSources(heading, [
+        SourceEmail(f"{source.message_date}  {source.subject}",
+                    store.message_text(source.message_id) if with_text else None)
+        for source in reviewed.flight.sources
+    ])
 
 
 def chosen_keys(day: str, flight: str) -> set[str]:
@@ -64,16 +98,14 @@ def format_sources(
 
 
 def _flight_block(reviewed: ReviewedFlight, store: Store, with_text: bool) -> str:
-    flight = reviewed.flight
-    segment = flight.segment
-    lines = [f"{segment.date}  {segment.flight_number or NO_FLIGHT_NUMBER}  {segment.origin}-{segment.destination}"]
-    for source in flight.sources:
-        lines.append(f"  {source.message_date}  {source.subject}")
+    found = flight_sources(reviewed, store, with_text)
+    lines = [found.heading]
+    for source in found.emails:
+        lines.append(f"  {source.header}")
         if not with_text:
             continue
-        text = store.message_text(source.message_id)
-        if text is None:
+        if source.text is None:
             lines.append(f"    {UNAVAILABLE}")
         else:
-            lines += [TEXT_PREFIX + line if line else TEXT_PREFIX.rstrip() for line in text.splitlines()]
+            lines += [TEXT_PREFIX + line if line else TEXT_PREFIX.rstrip() for line in source.text.splitlines()]
     return "\n".join(lines)

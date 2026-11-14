@@ -42,7 +42,7 @@ from .ollama.pull import KEPT_PARTIAL, PullFailed, PullProgress, format_bytes, p
 from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
 from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
-from .engine.report import format_report, run_next_step
+from .engine.report import format_report, format_totals, run_next_step
 from .engine.events import AUDIT, INCLUDE, STOPPED
 from .engine.thorough import format_include
 from .flights.decisions import InvalidCorrection, is_date, resolve_key
@@ -230,16 +230,9 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
             with Store(store_path) as store:
                 if args.from_store or (not args.review and not review.table_edited(store, review_path)):
                     unedited = review_path if not args.from_store and review_path.exists() else None
-                    summary = export.run_store_export(
-                        config, store, output_dir, config.export_data_dir, config.export_data_url,
-                        unedited_table=unedited,
-                    )
+                    summary = session.export_from_store(config, store, output_dir, unedited)
                 else:
-                    summary = export.run_export(
-                        review_path, output_dir, config.export_data_dir, config.export_data_url, store=store,
-                        config=config,
-                    )
-                _record_export(store, summary)
+                    summary = session.export_from_table(config, store, review_path, output_dir)
         else:
             summary = export.run_export(review_path, output_dir, config.export_data_dir, config.export_data_url)
     except (export.ExportError, ReferenceDataError) as exc:
@@ -247,11 +240,6 @@ def cmd_export(args: argparse.Namespace, config: Config) -> int:
         return EXIT_ERROR
     print(export.format_summary(summary))
     return EXIT_OK
-
-
-def _record_export(store: Store, summary: export.ExportSummary) -> None:
-    """Record the files an export wrote for the session in ``store``."""
-    session.record_export(store, summary.import_path, summary.manual_add_path)
 
 
 COMMANDS: dict[str, tuple[str, Callable[[argparse.ArgumentParser], None], Callable[..., int]]] = {}
@@ -552,6 +540,9 @@ class _RunPrinter:
             print(f"Starting {event.stage}.")
         elif isinstance(event, StageFinished) and event.summary is not None:
             self._summary(event)
+            totals = format_totals(event.summary)
+            if totals is not None:
+                print(totals)
             print()
         elif isinstance(event, Notice):
             _warn(event.message)

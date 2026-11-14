@@ -20,6 +20,7 @@ from ..output.review import DECISIONS_DISCARDED, ReviewSummary
 from ..stages.classify import ClassifySummary
 from ..stages.audit import AuditResult
 from ..stages.extract import ExtractSummary
+from ..stages.summary import Total
 from .thorough import IncludeSummary, check_lines
 
 REVIEW_TABLE_LEFT = "review table was edited and has been left as it is; pass --force to regenerate it"
@@ -49,10 +50,31 @@ class RunReport:
     @property
     def extract_failed(self) -> int:
         """Messages whose extraction still fails, by extract and include."""
-        failed = self.extract.failed + self.extract.not_in_mailbox
+        failed = self.extract.failed_total
         if self.include is not None:
-            failed += self.include.extraction.failed + self.include.extraction.not_in_mailbox
+            failed += self.include.extraction.failed_total
         return failed
+
+
+def stage_totals(summary: object) -> list[Total]:
+    """The session's totals so far for a stage's summary, as the progress
+    screen shows them: classify's and extract's add this run's work to what
+    earlier runs had done; a Thorough run's audit and include stages give
+    their sample's and newly included range's totals (while they run, their
+    counts are their extraction summaries). Review's summary has none: the
+    end-of-run report shows its figures."""
+    if isinstance(summary, (ClassifySummary, ExtractSummary, AuditResult, IncludeSummary)):
+        return summary.session_totals()
+    return []
+
+
+def format_totals(summary: object) -> str | None:
+    """The stage's session totals as one line (``run`` prints it after each
+    stage's summary), None for a stage without any."""
+    totals = stage_totals(summary)
+    if not totals:
+        return None
+    return "Session totals so far: " + " · ".join(total.text for total in totals)
 
 
 def run_next_step(report: RunReport) -> str:

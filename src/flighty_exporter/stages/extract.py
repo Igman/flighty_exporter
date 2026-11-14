@@ -33,7 +33,7 @@ from ..ollama.extraction import ExtractionClient, ExtractionFailed
 from ..progress import Progress
 from ..store import EXTRACT_PASS, Store
 from ..threshold import effective_threshold
-from .summary import failure_lines
+from .summary import Total, failure_lines
 
 PASS_NAME = EXTRACT_PASS
 NOT_IN_MAILBOX = "message is no longer in the mailbox (classified from a different mbox?)"
@@ -53,6 +53,21 @@ class ExtractSummary:
     interrupted: bool = False
     # Ended early for another reason (server unreachable, a stop requested).
     stopped: bool = False
+
+    @property
+    def failed_total(self) -> int:
+        """Messages not extracted: the extraction failed, or the message is
+        no longer in the mailbox. Both are retried on every run."""
+        return self.failed + self.not_in_mailbox
+
+    def session_totals(self) -> list[Total]:
+        """The session's totals so far: this run's extractions with those of
+        earlier runs, and the messages still failing."""
+        extracted = self.extracted + self.already_extracted
+        return [
+            Total("extracted", extracted, self.selected or None),
+            Total("failed", self.failed_total),
+        ]
 
 
 def run_extract(

@@ -32,7 +32,7 @@ from ..ollama.decision import EMAIL_TYPES, DecisionClient, DecisionError
 from ..progress import Progress
 from ..store import CLASSIFY_PASS, Store
 from ..threshold import effective_threshold
-from .summary import failure_lines
+from .summary import Total, failure_lines
 
 PASS_NAME = CLASSIFY_PASS
 GATE_BANDS = (0.5, 0.2, 0.05)
@@ -51,6 +51,17 @@ class ClassifySummary:
     interrupted: bool = False
     # Ended early for another reason (server unreachable, a stop requested).
     stopped: bool = False
+
+    def session_totals(self) -> list[Total]:
+        """The session's totals so far: this run's counts with what earlier
+        runs had already done; failures are retried, so ``failed`` is the
+        messages still failing."""
+        return [
+            Total("classified", self.classified + self.already_classified),
+            Total("resolved from machine-readable data", self.resolved_from_markup + self.already_resolved_from_markup),
+            Total("skipped", self.skipped),
+            Total("failed", self.failed),
+        ]
 
 
 def run_classify(

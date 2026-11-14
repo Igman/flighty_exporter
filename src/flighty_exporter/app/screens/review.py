@@ -41,7 +41,7 @@ from ...engine.report import RunReport
 from ...flights.decisions import InvalidCorrection, ReviewedFlight
 from ...output import flight_view
 from ...output.decide import Reviewer
-from ...output.sources import UNAVAILABLE
+from ...output import sources
 from ...store import Store
 
 GROUP_STYLES = {flight_view.BLOCKING: "red", flight_view.ADVISORY: "yellow", flight_view.NO_ATTENTION: ""}
@@ -312,21 +312,15 @@ class EmailScreen(Screen):
         self.store_path = store_path
 
     def compose(self) -> ComposeResult:
-        segment = self.reviewed.flight.segment
-        sources = self.reviewed.flight.sources
         with Store(self.store_path) as store:
-            texts = [store.message_text(source.message_id) for source in sources]
-        heading = (
-            f"{segment.date}  {segment.flight_number or flight_view.NO_NUMBER}  {segment.origin}-{segment.destination}"
-            f" · {len(sources)} source email{'s' if len(sources) != 1 else ''}"
-        )
+            found = sources.flight_sources(self.reviewed, store)
+        count = len(found.emails)
+        heading = f"{found.heading} · {count} source email{'s' if count != 1 else ''}"
         with VerticalScroll():
             yield Static(escape(heading), id="heading")
-            for number, (source, text) in enumerate(zip(sources, texts), 1):
-                yield Static(
-                    escape(f"[{number}/{len(sources)}]  {source.message_date}  {source.subject}"), classes="source"
-                )
-                yield Static(escape(text if text is not None else UNAVAILABLE))
+            for number, source in enumerate(found.emails, 1):
+                yield Static(escape(f"[{number}/{count}]  {source.header}"), classes="source")
+                yield Static(escape(source.shown_text))
         yield Footer()
 
 

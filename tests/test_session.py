@@ -11,6 +11,8 @@ import sqlite3
 import subprocess
 import time
 
+from fake_ollama import Decision
+from mailbox_fixtures import email, write_mbox
 from test_audit import NO_FLIGHT
 from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT
 from test_run import BROKEN_SUBJECT, mailbox, run
@@ -445,3 +447,69 @@ def test_an_extraction_failure_alone_does_not_make_a_run_finished(workspace):
         assert workspace.run(command, "--mailbox", str(mbox)).returncode == 0
 
     assert value(session(workspace), "run finished") == "no (resuming runs the remaining stages)"
+
+
+# -- where the session stands: one state, as the startup prompt shows it ----------------------
+
+STANDS = "where it stands"
+RESUME_REST = "nothing finished is sent to a model again."
+
+
+def test_a_finished_run_stands_complete_and_resuming_opens_its_review(workspace):
+    run(workspace, "--mailbox", str(mailbox(workspace)))  # one extraction keeps failing
+
+    text = session(workspace)
+
+    assert value(text, STANDS) == "The run is complete. Resuming opens its review."
+    assert value(text, "run finished") == "yes (resuming opens the review)"
+
+
+def test_every_candidate_extracted_or_failed_without_a_review_stopped_before_review(workspace):
+    mbox = mailbox(workspace)
+    for command in ("classify", "extract"):
+        assert workspace.run(command, "--mailbox", str(mbox)).returncode == 0
+
+    text = session(workspace)
+
+    # The one candidate left failed: nothing is left to extract but its retry.
+    assert value(text, "state") == "unfinished: 1 email still to extract"
+    assert value(text, STANDS) == (
+        "The run did not reach its end (it stopped before review). Resuming runs the remaining stages; "
+        + RESUME_REST
+    )
+
+
+def test_every_candidate_extracted_without_a_review_also_stopped_before_review(workspace):
+    mbox = complete_without_failures(workspace)
+    for command in ("classify", "extract"):
+        assert workspace.run(command, "--mailbox", str(mbox)).returncode == 0
+
+    text = session(workspace)
+
+    assert value(text, "state") == "complete"
+    assert value(text, STANDS).startswith("The run did not reach its end (it stopped before review).")
+
+
+def test_a_session_with_candidates_left_stands_unfinished_with_how_many(workspace):
+    assert workspace.run("classify", "--mailbox", str(mailbox(workspace))).returncode == 0
+
+    text = session(workspace)
+
+    assert value(text, STANDS) == (
+        "The run is unfinished: 3 likely flight emails still to extract. Resuming carries on where it "
+        "stopped; " + RESUME_REST
+    )
+
+
+def test_a_session_where_nothing_was_classified_says_so(workspace):
+    # Two plain emails, and every classification fails.
+    workspace.ollama.default_decision = Decision(status=500)
+    mbox = write_mbox(workspace.root / "plain.mbox", [email("Hello"), email("Another hello")])
+
+    assert workspace.run("classify", "--mailbox", str(mbox)).returncode == 0
+
+    text = session(workspace)
+
+    assert value(text, "messages recorded") == "2"
+    assert value(text, "state") == "unfinished: nothing classified yet"
+    assert value(text, STANDS) == "The run is unfinished: nothing has been classified yet."

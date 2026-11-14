@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import Config
-from ..output.export import ExportError, refresh_manual_add
+from ..output.export import ExportError, ExportSummary, refresh_manual_add, run_export, run_store_export
 from ..output.review import build_flight_list
 from ..store import EXTRACT_PASS, Store
 from ..threshold import effective_threshold
@@ -63,6 +63,12 @@ MANUAL_ADD_LIST = "manual-add list"
 
 STORE_SIDE_SUFFIXES = ("-wal", "-shm", "-journal")
 
+# The session's state (``SessionDescription.state``).
+FINISHED = "finished"  # the run reached its end: resuming opens the review
+STOPPED_BEFORE_REVIEW = "stopped before review"  # every candidate extracted or failed, no review yet
+NOTHING_CLASSIFIED = "nothing classified"
+STILL_TO_EXTRACT = "still to extract"
+
 FILES_NOT_RECORDED = (
     "this session's store was created before the tool recorded the files it writes, "
     "so files it generated earlier are not known and were not deleted"
@@ -74,6 +80,19 @@ class WrittenFile:
     kind: str  # REVIEW_TABLE, FAILURES_FILE, AUDIT_REPORT, IMPORT_FILE or MANUAL_ADD_LIST
     path: Path  # resolved, absolute
     written_at: str  # ISO 8601, UTC
+
+
+@dataclass(frozen=True)
+class SessionState:
+    """Where the session stands, in one value, with what each view says about
+    it: ``progress`` is the `session` command's state line (how far classify
+    and extract got), ``headline`` and ``detail`` the startup prompt's
+    sentence (what the state is, and what resuming does)."""
+
+    value: str  # FINISHED, STOPPED_BEFORE_REVIEW, NOTHING_CLASSIFIED or STILL_TO_EXTRACT
+    progress: str
+    headline: str
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -112,6 +131,47 @@ class SessionDescription:
     @property
     def still_to_extract(self) -> int:
         return self.candidates - self.extracted
+
+    @property
+    def read(self) -> int:
+        """Messages handled by classify: classified, or read from their own
+        machine-readable data."""
+        return self.classified + self.resolved_from_markup
+
+    @property
+    def not_classified(self) -> int:
+        """Messages recorded but not handled by classify yet."""
+        return max(self.messages - self.read, 0)
+
+    @property
+    def state(self) -> SessionState:
+        """The session's state. Finished first (see ``finished``); then
+        nothing classified; then stopped before review, when every candidate
+        was extracted or failed to be (failures are retried by the next
+        run); otherwise candidates are still to extract."""
+        if self.complete:
+            progress = "complete"
+        elif self.read == 0:
+            progress = "unfinished: nothing classified yet"
+        else:
+            progress = f"unfinished: {_emails(self.still_to_extract)} still to extract"
+        resume = "nothing finished is sent to a model again."
+        if self.finished:
+            return SessionState(FINISHED, progress, "The run is complete.", "Resuming opens its review.")
+        if self.read == 0:
+            return SessionState(NOTHING_CLASSIFIED, progress, "The run is unfinished:",
+                                "nothing has been classified yet.")
+        if self.still_to_extract == self.extraction_failed:
+            return SessionState(
+                STOPPED_BEFORE_REVIEW, progress, "The run did not reach its end",
+                f"(it stopped before review). Resuming runs the remaining stages; {resume}",
+            )
+        left = self.still_to_extract
+        return SessionState(
+            STILL_TO_EXTRACT, progress, "The run is unfinished:",
+            f"{left:,} likely flight email{'' if left == 1 else 's'} still to extract. Resuming carries on "
+            f"where it stopped; {resume}",
+        )
 
     @property
     def finished(self) -> bool:
@@ -179,6 +239,30 @@ def record_export(store: Store, import_path: Path | None, manual_add_path: Path 
     if manual_add_path is not None:
         record_written(store, MANUAL_ADD_LIST, manual_add_path)
     touch(store)
+
+
+def export_from_store(
+    config: Config, store: Store, output_dir: Path, unedited_table: Path | None = None
+) -> ExportSummary:
+    """Export the store's flight list with the saved decisions applied (see
+    ``export.run_store_export``) and record the files written with the
+    session. Raises what the export raises."""
+    summary = run_store_export(
+        config, store, output_dir, config.export_data_dir, config.export_data_url, unedited_table=unedited_table
+    )
+    record_export(store, summary.import_path, summary.manual_add_path)
+    return summary
+
+
+def export_from_table(config: Config, store: Store, review_path: Path, output_dir: Path) -> ExportSummary:
+    """Export from the review table at ``review_path``, recording the user's
+    edits as decisions first (see ``export.run_export``), and record the
+    files written with the session. Raises what the export raises."""
+    summary = run_export(
+        review_path, output_dir, config.export_data_dir, config.export_data_url, store=store, config=config
+    )
+    record_export(store, summary.import_path, summary.manual_add_path)
+    return summary
 
 
 def written(store: Store, kind: str) -> list[Path]:
@@ -347,12 +431,7 @@ def format_description(description: SessionDescription) -> str:
         names = "unknown"
     else:
         names = ", ".join(d.passenger_names) or "none (no passenger filtering)"
-    if d.complete:
-        state = "complete"
-    elif d.classified + d.resolved_from_markup == 0:
-        state = "unfinished: nothing classified yet"
-    else:
-        state = f"unfinished: {_emails(d.still_to_extract)} still to extract"
+    state = d.state
     lines = [
         f"Session in {d.store_path}",
         f"  mailbox:                    {mailbox}",
@@ -374,9 +453,10 @@ def format_description(description: SessionDescription) -> str:
         f"  extraction failed:          {d.extraction_failed}",
         f"  flights:                    {d.flights}",
         f"  flights with a saved decision: {d.flights_with_decision}",
-        f"  state:                      {state}",
+        f"  state:                      {state.progress}",
         f"  run finished:               "
-        f"{'yes (resuming opens the review)' if d.finished else 'no (resuming runs the remaining stages)'}",
+        f"{'yes (resuming opens the review)' if state.value == FINISHED else 'no (resuming runs the remaining stages)'}",
+        f"  where it stands:            {state.headline} {state.detail}",
     ]
     in_use = f"{d.threshold_used:g}"
     if d.threshold_used < d.threshold_configured:

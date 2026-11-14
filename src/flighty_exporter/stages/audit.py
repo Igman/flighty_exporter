@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ..config import Config
+from ..flights.decisions import NO_FLIGHT_NUMBER
 from ..flights.records import ExtractionRecord
 from ..mail.reader import Mailbox, Message
 from ..ollama.extraction import ExtractionClient
@@ -59,7 +60,7 @@ from ..store import Store
 from ..tables import format_message_date, write_csv
 from ..threshold import effective_threshold
 from .extract import ExtractSummary, extract_messages
-from .summary import failure_lines
+from .summary import Total, failure_lines
 
 BAND_EDGES = (0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
 
@@ -159,6 +160,15 @@ class AuditResult:
     hits_below: list[Hit] = field(default_factory=list)
     lowest_hit: Hit | None = None
     interrupted: bool = False
+
+    def session_totals(self) -> list[Total]:
+        """The sample's totals: messages reused from earlier extractions
+        count as extracted."""
+        return [
+            Total("sampled", self.sampled),
+            Total("extracted", self.reused + self.extraction.extracted, self.sampled),
+            Total("failed", self.extraction.failed_total),
+        ]
 
 
 def run_audit(
@@ -326,7 +336,7 @@ def format_report(
         f"  sampled messages:     {result.sampled}",
         f"  already extracted (reused): {result.reused}",
         f"  sent to the extraction model: {sent}",
-        f"  extraction failures:  {ex.failed + ex.not_in_mailbox}",
+        f"  extraction failures:  {ex.failed_total}",
         f"  retries:              {ex.retries}",
     ]
     if ex.not_in_mailbox:
@@ -354,7 +364,7 @@ def format_report(
         lines.append(f"  gate {hit.gate:.4g}  {date}  {sender}  \"{subject}\"")
         for segment in hit.record.segments:
             lines.append(
-                f"      {segment.date}  {segment.flight_number or '(no flight number)'}  "
+                f"      {segment.date}  {segment.flight_number or NO_FLIGHT_NUMBER}  "
                 f"{segment.origin}-{segment.destination}"
             )
 

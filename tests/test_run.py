@@ -213,6 +213,29 @@ def test_run_asked_to_stop_finishes_the_message_in_progress_and_resumes_after_it
     assert result.count("already extracted") == 3
 
 
+def test_each_stage_ends_with_the_session_totals_so_far_across_a_stop_and_a_resume(workspace):
+    # The totals the application's progress screen shows: this run's work
+    # added to what earlier runs had done.
+    _, mbox = itineraries(workspace)
+
+    proc, stdout, _ = start_blocked_on_third_chat(workspace, mbox, signal.SIGTERM)
+
+    assert proc.returncode == 143
+    totals = [line for line in stdout.splitlines() if line.startswith("Session totals so far:")]
+    assert totals == [
+        "Session totals so far: classified 6 · resolved from machine-readable data 0 · skipped 0 · failed 0",
+        "Session totals so far: extracted 3 of 6 · failed 0",
+    ]
+
+    result = run(workspace, "--mailbox", str(mbox))
+
+    totals = [line for line in result.stdout.splitlines() if line.startswith("Session totals so far:")]
+    assert totals == [
+        "Session totals so far: classified 6 · resolved from machine-readable data 0 · skipped 0 · failed 0",
+        "Session totals so far: extracted 6 of 6 · failed 0",
+    ]
+
+
 # -- model-server problems: the existing message, a non-zero exit, no prompt ----------
 
 
