@@ -51,9 +51,9 @@ from ..config import Config
 from ..flights.records import ExtractionRecord
 from ..mail.reader import Mailbox, Message
 from ..ollama.extraction import ExtractionClient
-from ..output.review import _message_date, write_csv
 from ..progress import Progress
 from ..store import Store
+from ..tables import format_message_date, write_csv
 from .extract import ExtractSummary, extract_messages
 
 BAND_EDGES = (0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
@@ -326,7 +326,7 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
     lines += ["", f"Sampled messages below the threshold that contained flight segments: {len(result.hits_below)}"]
     for hit in result.hits_below:
         sender, subject, raw_date = store.message_info(hit.message_id)
-        date, _ = _message_date(raw_date)
+        date, _ = format_message_date(raw_date)
         lines.append(f"  gate {hit.gate:.4g}  {date}  {sender}  \"{subject}\"")
         for segment in hit.record.segments:
             lines.append(

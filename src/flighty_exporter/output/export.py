@@ -32,8 +32,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from ..tables import write_csv
 from . import openflights as import_format
-from .review import write_csv
 
 MANUAL_ADD_NAME = "manual-add.csv"
 MANUAL_ADD_COLUMNS = (

@@ -35,12 +35,9 @@ Both files are UTF-8 with a byte-order mark so spreadsheets detect the encoding.
 
 from __future__ import annotations
 
-import csv
 import hashlib
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from ..config import Config
@@ -49,6 +46,7 @@ from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, c
 from ..mail.markup import MARKUP_SOURCE
 from ..stages.extract import PASS_NAME
 from ..store import Store
+from ..tables import format_message_date, write_csv
 from .openflights import OpenFlights, ReferenceDataError
 
 REVIEW_COLUMNS = (
@@ -141,7 +139,7 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
     unread_attachments = 0
     for message_id in selected:
         sender, subject, raw_date = store.message_info(message_id)
-        message_date, sent_at = _message_date(raw_date)
+        message_date, sent_at = format_message_date(raw_date)
         for reason in store.attachment_notes(message_id):
             unread_attachments += 1
             failures.append(
@@ -299,24 +297,3 @@ def _dropped_line(booking: DroppedBooking) -> str:
 def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-
-def write_csv(path: Path, columns: tuple[str, ...], rows: list[dict[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
-    tmp.replace(path)
-
-
-def _message_date(raw: str) -> tuple[str, str]:
-    """The message's Date header as shown ('YYYY-MM-DD HH:MM' in the sender's
-    time zone, or as written if it cannot be parsed) and as a sortable UTC
-    timestamp ('' if it cannot be parsed, so undated messages sort first)."""
-    try:
-        parsed = parsedate_to_datetime(raw)
-    except (TypeError, ValueError, IndexError):
-        return raw, ""
-    utc = parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    return parsed.strftime("%Y-%m-%d %H:%M"), utc.strftime("%Y-%m-%dT%H:%M:%S")
