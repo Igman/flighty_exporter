@@ -1,956 +1,928 @@
 # flighty-exporter
 
 flighty-exporter reads a Google Takeout export of your Gmail (an mbox file),
-finds the emails that describe flights you booked, and turns them into a file
-you can import into Flighty, so the app knows about flights from before you
-started using it. The emails are read by two language models running on your
-own machine through Ollama; nothing is sent to a hosted model. You check the
-result in a spreadsheet before anything is exported.
+finds the emails about flights you booked, lets you check them, and writes a
+file you can import into Flighty, so the app knows about flights from before
+you started using it. The emails are read by two language models running on
+your own machine through Ollama.
 
-What it does not do:
+What it is not:
 
-- It is not affiliated with Flighty or endorsed by it.
-- It does not talk to Flighty. It writes a file; you send that file to Flighty
+- It is not affiliated with or endorsed by Flighty.
+- It never contacts Flighty. It writes a file; you send that file to Flighty
   yourself.
-- It does not contact any service other than your local Ollama server and,
-  once, the two OpenFlights reference-data downloads (`airports.dat` and
-  `airlines.dat`, see [Privacy](#privacy)). It does not access your live
-  Gmail account.
+- Email content goes only to a model server on your own machine. The only
+  other network access is a one-time download of two public reference files
+  (see [Privacy](#privacy)). It never touches your live Gmail account.
 
 ## Contents
 
-- [Privacy](#privacy)
-- [Requirements](#requirements)
-- [Getting your mail](#getting-your-mail)
-- [Setup](#setup)
-- [The workflow](#the-workflow)
+- [Quick start](#quick-start)
+- [The application](#the-application)
 - [Importing into Flighty](#importing-into-flighty)
+- [How it works](#how-it-works)
+- [Privacy](#privacy)
 - [Performance](#performance)
+- [Command reference](#command-reference)
 - [Configuration reference](#configuration-reference)
-- [Known limits](#known-limits)
-- [Troubleshooting](#troubleshooting)
+- [Known limits and troubleshooting](#known-limits-and-troubleshooting)
 - [Development](#development)
 - [Licence and credits](#licence-and-credits)
 
+## Quick start
+
+**Requirements**
+
+- macOS or Linux, and [uv](https://docs.astral.sh/uv/) (it installs Python
+  3.12 or later and the dependencies for you).
+- [Ollama](https://ollama.com/download) 0.35.0 or later, running locally.
+- The two models: `nimble` (the decision model, about 9.3 GB) and
+  `gemma4:12b-it-q4_K_M` (the extraction model, about 8 GB). The application
+  offers to download them; or run `ollama pull` for each yourself.
+- Memory: tested on a machine with 24 GB of RAM.
+- Flighty Pro, if you want to import flights older than a year (Flighty's
+  rule, not this tool's).
+
+**Getting your mail.** Use Google Takeout (takeout.google.com) while signed
+in to the Google account whose mail you want. Deselect everything, select
+only Mail (Takeout exports Gmail in the mbox format), create the export and
+download it when Google says it is ready, which can take hours or days for a
+large mailbox. Unpack the archive: the mailbox is a single `.mbox` file
+under `Takeout/Mail/`, in an English-language account usually called
+`All mail Including Spam and Trash.mbox`. You can leave all mail included;
+the tool skips messages under the Spam, Trash, Drafts and Chat labels
+itself. Google's menus change from time to time; look for the Mail product
+in Takeout's list and its format options.
+
+**Running it.**
+
+```
+git clone https://github.com/Igman/flighty_exporter.git
+cd flighty_exporter
+uv run flighty-exporter
+```
+
+`uv run` installs everything on first use. The command opens a full-screen
+application in your terminal. It asks three questions (your mailbox file,
+your name as it appears on bookings, and Quick or Thorough), writes them to
+`flighty_exporter.toml` in the current folder, checks that Ollama is ready
+(offering to download a missing model), and runs. Classifying a large
+mailbox takes hours (see [Performance](#performance)); you can quit at any
+time and the next launch carries on. When the run is complete you review the
+flights it found and export the import file for Flighty. Every file the tool
+writes goes next to the config file.
+
+## The application
+
+The bare command (`uv run flighty-exporter`, or
+`uv run flighty-exporter --config FILE`) opens the application when both
+input and output are a terminal. Outside a terminal (piped, or from a script) it
+prints the usage line and exits with status 2; use [`run`](#run) there.
+Ctrl-Q quits from any screen.
+
+The screens, in the order you meet them:
+
+### Setup (first launch)
+
+With no session yet (no store file), the application starts with setup,
+filled in from the config file if there is one:
+
+1. **Your mailbox file**: the path to the `.mbox` file. Dragging the file
+   into the terminal pastes its path; a relative path is read from the
+   current folder. It is checked when you leave the field: a missing file, a
+   folder, an unzipped Takeout folder, a `.zip`, an empty file or a file that
+   does not begin like an mbox is refused with a message saying what to
+   point at instead.
+2. **Your name variants**: your name as it appears on bookings, one per line
+   or separated by commas (with and without a middle name, a maiden name,
+   and so on). They are used to leave out bookings you made for other
+   people. Case, accents, word order, punctuation and titles are ignored, so
+   `ELLIS/JORDAN MR` already matches `Jordan Ellis` (see
+   [passenger filtering](#passenger-filtering)). Leaving it empty turns
+   passenger filtering off: every booking is kept. A line that names no one
+   (such as `Mr`) is refused.
+3. **How thorough to be**: Quick (the default) classifies every email and
+   extracts the flight emails. Thorough also checks, after extraction, for
+   flight emails the first filter missed, which takes roughly 2 to 35
+   minutes more, and may lower the threshold for this session (see
+   [Thoroughness](#thoroughness)).
+
+A "You entered" panel repeats your answers. Ctrl-S (or the button) writes
+them to the config file, creating it if needed; every other setting, comment
+and section in an existing file is left as it is. A mailbox inside the
+config file's folder is written as a relative path.
+
+**The model-server step** follows. It shows whether the Ollama address is
+on this machine, whether the server answers, its version, and each model as
+ready or missing with its approximate size. Keys:
+
+- `c` checks again (after starting Ollama, for example);
+- `d` downloads the next missing model, after a confirmation (`y`/`n`)
+  that names it and its size, with a progress bar; quitting during a
+  download is fine, because Ollama keeps the partial download;
+- `s` starts the run once everything is ready;
+- `b` goes back to the answers; `q` quits.
+
+A non-local Ollama address is refused here as everywhere (see
+[Privacy](#privacy)); the application has no `--allow-remote`, so the only
+fixes are pointing `[ollama] address` at this machine or setting
+`allow_remote = true` in the config file, then starting again.
+
+### Resume or start fresh (later launches)
+
+When a session exists, the application describes it: the store and the
+mailbox (marked "no longer there" if the file has moved), when it started
+and was last active, the names and thoroughness it was started with, how
+many emails were read (messages under Spam, Trash, Drafts and Chat are not
+counted), how many likely flight emails were extracted, the flights and
+saved decisions, the threshold in use, and how many files the session wrote.
+Then:
+
+- `r` resumes. An unfinished run carries on where it stopped, sending
+  nothing finished to a model again. A finished run opens its review
+  directly; that needs only the store, not the mailbox.
+- `f` starts fresh, after one confirmation (`y` to confirm, `n` or Escape
+  to go back) listing what would be lost (for example "classification of
+  200 emails", "extraction of 16 emails, and 77 more read by the check for
+  missed flight emails", "2 generated files").
+- `q` quits.
+
+**Starting fresh deletes** the files the tool recorded writing for the
+session that still exist (the review table, the failures file, the audit
+report, every import file and the manual-add list), then the store with its
+`-wal`, `-shm` and `-journal` side files. With the store go every result,
+the saved email text, your review decisions and manual-add ticks, and the
+session's lowered threshold. **It keeps** the mailbox, the config file,
+downloaded models, the cached OpenFlights data and any file the tool did not
+record writing (your own files in the same folder are safe). Setup then opens
+with the previous answers filled in.
+
+**Changing any setting means starting fresh.** There is no settings screen:
+a session's settings are fixed once it starts. To change your names, the
+mailbox or the thoroughness, start fresh and answer setup again. Be careful
+with the names: starting fresh repeats classification, which is many hours
+on a large mailbox.
+
+### The run
+
+The progress screen runs the stages in order: classify, extract and review
+for Quick; classify, extract, audit, include and review for Thorough (what
+each does is under [How it works](#how-it-works)). It shows every stage
+with its state (waiting, running, done, nothing to do, stopped or skipped,
+with the reason for a skip), a progress bar for the running stage with
+messages done out of the total, the seconds per message and the time
+remaining, running counts (classified, resolved from machine-readable data,
+skipped, failed; extracted N of M; the audit's sample), and a Notices panel
+for warnings.
+
+Keys:
+
+- `p` pauses after the message in progress, and `p` again continues;
+- `q` quits after the message in progress (`q` or Ctrl-C again quits at
+  once); the next launch carries on, and at most the message in progress is
+  redone;
+- `r` retries after a problem, once you have fixed it.
+
+A problem with the model server (not running, too old, a model missing, or
+the server going away mid-stage) stops the run with a red Problem panel
+holding the same message the commands print (see
+[Troubleshooting](#troubleshooting)). A message that fails is counted, and
+the run goes on; failed messages are tried again on the next run.
+
+When the run finishes, a Report panel shows the end-of-run report: flights
+found (confirmed and booked only), flights needing attention and the count
+per reason, flights pre-set to not keep, bookings cancelled, bookings with
+replaced segments, bookings dropped as other passengers', saved decisions
+discarded because their flight is no longer produced, messages that failed
+per stage, PDF attachments not read, what the check for missed flight
+emails found and changed, and the files written. Press `enter` to review
+the flights.
+
+### The review
+
+The review opens only after a complete run, so you never judge a booking
+before its cancellation or schedule change has been read. Every decision is
+saved in the store the moment you make it, so quitting loses nothing and
+the review can span several sittings; the `review`, `export`, `flights` and
+`decide` commands see the same decisions.
+
+At the top: the totals (`Flights: N · kept K · not kept M · needing
+attention A`, over every flight whatever the filters show) and the active
+filters. Then the table, one row per flight, with the columns:
+
+| Column | Meaning |
+| --- | --- |
+| `date` | Local departure date, `YYYY-MM-DD`. |
+| `flight` | Flight number with the airline prefix, `(none)` when there is none. |
+| `route` | Origin and destination airport codes, `LIS-OSL`. |
+| `airline` | As the email names it. |
+| `booking` | Booking reference (several joined with `; `). |
+| `evidence` | `confirmed` or `booked only` (see below). |
+| `keep` | `yes` or `no`: only kept flights are exported. |
+| `corrected` | `corrected` when you have corrected the flight. |
+| `reasons` | Its attention reasons, blocking ones in red, advisory in yellow. |
+
+Flights with a blocking reason come first, then flights with only advisory
+reasons, then the rest, each group by date and flight number.
+
+**Attention reasons.** Blocking reasons pre-set `keep` to `no`; keep the
+flight yourself if you have checked it (correcting it if needed):
+
+- `unknown airport XXX`: the code is not in OpenFlights' airport data.
+- `unknown airline XX`: no airline in OpenFlights' data has this prefix.
+- `malformed flight number`: not a two-character airline designator (with
+  at least one letter) followed by 1 to 4 digits and an optional letter.
+- `origin and destination are the same`
+- `implausible date`: before 1990, or more than 400 days after the latest
+  email about the flight.
+- `low confidence`: the model's confidence, halved once for each reason
+  above, is below `[review] min_confidence` (0.7).
+
+Advisory reasons leave `keep` at `yes` but ask you to look:
+
+- `no flight number`: the export puts the flight on the manual-add list.
+- `email was truncated before extraction`: the email was longer than the
+  extraction input limit, so part of it was not read.
+- `no passenger named`: the booking names no passenger, so the tool cannot
+  tell whether it is yours.
+
+The airport and airline checks need OpenFlights' reference data, downloaded
+on first use; if it cannot be loaded, those two checks are skipped and the
+others still run.
+
+**Evidence.** A flight is `confirmed` when a check-in, boarding-pass or
+post-flight email exists for it, and `booked only` otherwise. It is for your
+judgement and never removes a flight.
+
+**The detail panel** below the table follows the cursor: every field,
+passengers and confidence, `keep` with whether it is the pre-set value or
+your choice, each reason marked blocking or advisory, each correction next
+to the value the tool found, for a kept flight that goes on the manual-add
+list whether you have ticked it as added by hand in Flighty (and why it is
+on the list), and its source emails with dates and subjects.
+
+**Keys:**
+
+| Key | Action |
+| --- | --- |
+| Arrow keys | Move between flights. |
+| Space or `k` | Keep or drop the selected flight. |
+| `enter` | Read its source emails: each one's date and subject, then the saved text (sender, subject, date, the cleaned body and any PDF text). Escape returns. The mailbox file is not needed. |
+| `c` | Correct its date, flight number, origin or destination. `enter` saves, Escape cancels. The corrected flight is checked like any other: a correction to an unknown airport is flagged, a fixed code clears its reason. An unreal date or an empty airport is refused and nothing is saved. Codes are upper-cased; flight numbers lose spaces, hyphens and dashes. A value typed back to the original removes that correction. |
+| `u` | Clear your decision on it (asks first if it holds a correction). The manual-add tick stays. |
+| `f` | Show only flagged flights (any attention reason); again to show all. |
+| `n` | Show only flights not kept; again to show all. |
+| `y` | Step through the years present, oldest first, then back to all years. |
+| `d` | List the bookings dropped as other passengers' (reference, passengers, flights, first date). |
+| `x` | List the emails that passed the first filter but could not be read (date, sender, subject, reason): look these up yourself. |
+| `e` | Go to the export. |
+| `q` | Quit. |
+
+The filters combine. A flight sent by an older version of the tool may show
+`source text unavailable (extracted before text was saved)` in place of its
+text. Flights the tool missed entirely are added directly in Flighty; the
+application has no "add flight" action.
+
+### The export
+
+Press `e` in the review. The export screen first shows the plan, writing
+nothing: how many flights go in the import file, how many must be added by
+hand, and how many are not kept (the same numbers as
+`export --from-store --dry-run`). Keys:
+
+- `e` (or `enter`) writes the files: the import file
+  `openflights-backup-YYYY-MM-DD-HHMM.csv` (the time is UTC; an export in
+  the same minute as the previous one replaces it) and `manual-add.csv`,
+  next to the config file. The screen shows the import file's full path and
+  the steps for [importing it into Flighty](#importing-into-flighty).
+- `o` shows the import file in Finder (macOS; elsewhere the screen names the
+  folder).
+- Space ticks the selected flight on the "Add by hand in Flighty" checklist
+  (date, route, flight number, reason) once you have entered it in Flighty.
+  Ticks are saved at once and written to `manual-add.csv` without exporting
+  again, so you can work through the list over several sittings.
+- `r` retries after a problem (the reference data could not be loaded).
+- `b` goes back to the review with its filters and selected flight as you
+  left them, so you can change a decision and export again.
+- `q` quits.
+
+A kept flight goes on the manual-add list instead of the import file when it
+has `no flight number`, is `dated before 2006` (Flighty has no records
+before then), or has an `airport XXX not in OpenFlights data` or `no
+OpenFlights airline for prefix XX`. Nothing is sent anywhere: the screen only
+writes local files.
+
+## Importing into Flighty
+
+What was verified (November 2026, with a file written by this tool's
+export):
+
+- Flighty's OpenFlights import works by emailing the file to an address the
+  app gives you. The test reached it through Settings, then Import Flights,
+  then OpenFlights.
+- Flighty accepted the generated file and imported its flights, including
+  one older than a year. Airline, route and the direction of each flight
+  were as submitted.
+- A flight Flighty already had was not imported a second time.
+
+Not recorded: which further details (aircraft, times, terminals) Flighty
+filled in itself.
+
+Be aware: Flighty documents support only for files exported by OpenFlights
+itself. This tool writes OpenFlights' backup format without going through
+OpenFlights. It was accepted when tested, but may stop working if Flighty
+tightens its checks.
+
+Flights on the manual-add list are entered by hand in Flighty, which needs
+only the two airports and the date.
+
+## How it works
+
+![Data flow: the mbox file feeds classify, extract and audit, which read and write the store; review reads the store and writes review.csv; export reads review.csv (recording your edits in the store) or the store, and writes the import file for Flighty.](docs/pipeline.svg)
+
+The stages never call each other; everything passes through the store, one
+SQLite file. The single commands, `run` and the application all use the
+same stages. The review table (`review.csv`) is one way to hand your
+decisions to the export, not the only one: decisions live in the store, the
+application writes them there directly, and `export` records the edits of a
+review table there before exporting. Dashed arrows: extract and audit go
+back to the mailbox for message bodies, reading only the messages they need
+(classify records where each message sits in the file).
+
+**Classify.** Every message except those under Spam, Trash, Drafts and Chat:
+
+- Machine-readable data first. A message that carries schema.org
+  FlightReservation markup (which many airlines embed for Gmail) or a flight
+  calendar (`.ics`) attachment is read directly, with no model, and its
+  flights go to the review with confidence 1.0. Incomplete markup, and
+  calendar events with only UTC times, are ignored and the message is
+  classified like any other.
+- Every other message goes to the decision model (`nimble`) with its
+  sender, subject, attachment file names and the start of its body (PDF text
+  is not sent at this stage). The model gives a probability for the gate
+  question "does this email contain flight details for a specific booking?"
+  and an email type (`booking confirmation`, `change`, `cancellation`,
+  `check-in or boarding pass`, `post-flight`, `marketing` or `other`).
+
+**The threshold.** Messages whose gate probability is at or above
+`[classify] threshold` (default 0.05, deliberately low because the
+probabilities are not calibrated) go to extraction. It is applied when
+extract selects messages, never at classify time, so changing it never
+means classifying again. A Thorough run may lower it for its session: that
+is the **effective threshold**, stored in the store (the config file is
+never rewritten) and used by every later extract, audit, review, export and
+sources on that store. The lower of the configured and the effective
+threshold applies.
+
+**Extract.** Each selected message without an extraction goes to the
+extraction model (`gemma4:12b-it-q4_K_M`), which reads the whole cleaned
+body plus the text layer of any PDF attachment (up to
+`[extract] max_input_chars` characters) and returns the email kind
+(`booking`, `change`, `cancellation`, `check-in` or `other`), the booking
+reference, the passenger names and each flight segment: local departure
+date, airline, flight number, origin and destination, confidence. An
+invalid or cut-off answer is retried (`[extract] retries`) and then
+recorded as a failure, to be tried again on the next run. The text of each
+email that yields a flight record is saved in the store for the review.
+
+### Thoroughness
+
+**Quick** runs no audit. **Thorough** runs the audit after extract: the
+classified messages are divided into gate bands (`[0, 0.001)`,
+`[0.001, 0.005)`, `[0.005, 0.01)`, `[0.01, 0.02)`, `[0.02, 0.05)`,
+`[0.05, 0.1)`, `[0.1, 0.2)`, `[0.2, 0.5)`, `[0.5, 1]`); up to
+`[audit] sample_size` messages from each band, and separately from each
+band's messages with a PDF attachment, are sent to the extraction model; the
+report gives each band's hit rate. Then the include stage: if a sampled
+message below the threshold contained flights, the lower edge of the lowest
+such band is the suggested threshold, and the messages it would add that
+have no extraction yet are counted. If that count is at most
+`[audit] auto_include_budget` (default 2,000), the session's threshold is
+lowered and those messages are extracted (the ones the audit already read
+are not sent again). Over the budget nothing changes, and the report says
+what was found, how many emails including it would add, and how to include
+them (set `[classify] threshold` to the suggested value, or raise the
+budget, then run again). This happens once per run; the end-of-run report's
+"check for missed flight emails" lines say what happened, for example:
+
+```
+threshold lowered from 0.05 to 0.02 for this session; 3 emails newly included by the lower threshold (1 already read by the check, 2 read now), 3 of them with flights
+```
+
+### Consolidation
+
+Review turns the extraction records of every message at or above the
+threshold, and of every message resolved from machine-readable data, into
+one row per flight:
+
+- **Bookings.** Emails sharing a booking reference are one booking. An email
+  with no booking reference joins a booking that already has the same
+  flight (date and flight number); otherwise it forms its own booking.
+- **Cancellations.** A cancellation email removes every flight the booking
+  has so far. A later booking or change email under the same reference
+  brings flights back (a rebooking).
+- **Changes, per leg.** A flight in a later booking or change email replaces
+  earlier flights of the booking with the same origin and destination. Legs
+  the later email does not mention are kept.
+- <a id="passenger-filtering"></a>**Passengers.** A booking whose passengers
+  include none of your name variants is dropped with all its flights, and
+  listed (`d` in the review). Matching ignores case, accents, word order,
+  punctuation and titles (Mr, Mrs, Dr, Herr, Mme, ...). A passenger matches
+  when every word of one of your variants is in the passenger's name (extra
+  middle names on the ticket are fine), or when the passenger's name has at
+  least two words and all of them are in your variant (a ticket that leaves
+  out your middle name). There is no fuzzy or initial matching. A booking
+  that names no passenger is kept and flagged `no passenger named`. With no
+  names configured, filtering is off.
+- **Duplicates.** The same flight from several bookings or emails (same date
+  and flight number, or same date and route when there is no flight number)
+  appears once.
+- **Evidence.** `confirmed` when a check-in, boarding-pass or post-flight
+  email exists for the flight, `booked only` otherwise.
+
+Then **validation** adds the [attention reasons](#the-review) and pre-sets
+`keep`.
+
+### Decisions, corrections and the session
+
+A **decision** belongs to a flight, identified by its date and flight
+number as the tool found them (or date and route when there is no number);
+this is the `flight_id` column of the review table. It holds an optional
+keep choice, optional corrections to date, flight number, origin and
+destination, and the manual-add tick. Corrected flights are validated again,
+so their reasons and pre-set keep follow the corrected values; then your
+keep choice wins over the pre-set one.
+
+**Decisions follow the latest result.** If a later run no longer produces a
+flight (say a cancellation email was found), its decision is discarded, and
+the end-of-run report counts these.
+
+A **session** is one store plus the files the tool generated from it. The
+store records the mailbox and settings the session was started with (by the
+first command that brought a mailbox to it), when it was last active, the
+effective threshold, and every file the tool wrote for it. `session`
+describes it and `run --fresh` (or `f` in the application) starts fresh.
+
 ## Privacy
 
-**Email content goes only to a model server on your machine.** The commands
-that use a model (`classify`, `extract` and `audit`) send email text to the
-Ollama address in the config file, and refuse to start if that address is not
-on this machine. Local means `localhost`, an address in 127.0.0.0/8, `::1`, or
-a host name that resolves only to those. A name that does not resolve counts
-as not local.
+**Email content goes only to a model server on this machine.** Everything
+that uses a model (`run`, `classify`, `extract`, `audit`, the application)
+sends email text to `[ollama] address`, and refuses to start if that
+address is not on this machine. Local means `localhost`, an address in
+127.0.0.0/8, `::1`, or a host name that resolves only to those; a name that
+does not resolve counts as not local. `setup --check` and `pull-models`
+apply the same rule.
 
 **The override.** If you really mean to use an Ollama server on another
-machine, set `allow_remote = true` under `[ollama]` or pass `--allow-remote`.
-The tool then prints a warning on every run:
+machine, set `allow_remote = true` under `[ollama]` (or pass
+`--allow-remote` to a command). Every run then warns:
 
 ```
 warning: email content is being sent to the Ollama server at http://..., which is not on this machine (allow_remote or --allow-remote is set).
 ```
 
 **Proxies are bypassed.** Requests to Ollama ignore `HTTP_PROXY` and similar
-settings, because a proxy would carry email content off the machine even when
-the address is local.
+settings, because a proxy would carry email content off the machine even
+when the address is local.
 
 **The only other network access** is the download of OpenFlights'
-`airports.dat` and `airlines.dat` from GitHub the first time `review` or
-`export` needs them. They are cached (by default in
-`~/.cache/flighty_exporter/openflights`) and reused; the download sends
-nothing about you or your mail.
+`airports.dat` and `airlines.dat` from `[export] data_url` the first time
+review or export needs them. They are cached in `[export] data_dir`
+(default `~/.cache/flighty_exporter/openflights`) and reused; the download
+sends nothing about you. Model downloads (`pull-models`, `d` in setup) are
+made by your Ollama server, only after you confirm.
 
-**What is stored on your disk.** These files hold personal data (your
-messages' senders, subjects and dates, your names, your flights). Keep them
-private and never commit them:
+**What is stored, and where.** All of it next to the config file unless you
+choose other paths. These files hold personal data (your senders, subjects,
+dates, email text, names and flights); keep them private and never commit
+them:
 
-| File | Written by | Default name |
+| File | Default name | Written by |
 | --- | --- | --- |
-| Your config (paths, name variants) | you | `flighty_exporter.toml` |
-| The store: every pass's results, the text of the emails flights came from, and your review decisions (SQLite) | `classify`, `extract`, `audit`, `run`, `export`, `mark-added`, `decide`, the application | `flighty_exporter.db` (plus `-wal`/`-shm` side files) |
-| The review table | `review`, `run` | `review.csv` |
-| The failures file | `review`, `run` | `failures.csv` |
-| The audit table | `audit` | `audit.csv` |
-| The import file | `export` | `openflights-backup-YYYY-MM-DD-HHMM.csv` |
-| The manual-add list | `export` | `manual-add.csv` |
+| Your config (paths, name variants) | `flighty_exporter.toml` | you, setup |
+| The store: every result, the text of the emails flights came from, decisions and session values (SQLite) | `flighty_exporter.db` (and `-wal`, `-shm` side files) | every command that writes results, the application |
+| The review table | `review.csv` | `review`, `run`, the application's run |
+| The failures file | `failures.csv` | `review`, `run`, the application's run |
+| The audit table | `audit.csv` | `audit`, Thorough runs |
+| The import file | `openflights-backup-YYYY-MM-DD-HHMM.csv` | `export`, the application's export |
+| The manual-add list | `manual-add.csv` | `export`, `mark-added`, the application's export |
 
 The repository's `.gitignore` covers these default names, mbox files and
-Takeout archives. It cannot know about names you choose yourself (with
-`--output`, `--store`, `--review`, `--output-dir` or the config): keeping
-custom-named files out of version control is up to you.
-
-## Requirements
-
-- macOS or Linux.
-- [uv](https://docs.astral.sh/uv/). It installs the right Python (3.12 or
-  later) and the one dependency (`pypdf`) for you.
-- [Ollama](https://ollama.com/download) 0.35.0 or later (the release that
-  added the decision endpoint the classify pass uses), running locally.
-- The two models, pulled once:
-
-  ```
-  ollama pull nimble                    # decision model, about 9.3 GB
-  ollama pull gemma4:12b-it-q4_K_M      # extraction model, about 8 GB
-  ```
-
-- Memory: tested on a machine with 24 GB of RAM. Only one model is loaded at a
-  time, because classification and extraction are separate commands.
-- Flighty Pro, if you want to import flights older than a year (Flighty's
-  rule, not this tool's).
-
-## Getting your mail
-
-The tool reads a Gmail mailbox exported with Google Takeout:
-
-1. Open Google Takeout (takeout.google.com) while signed in to the Google
-   account whose mail you want.
-2. Deselect everything, then select only Mail. Takeout exports Gmail in the
-   mbox format. You can leave all mail included: the tool skips messages
-   under the Spam, Trash, Drafts and Chat labels itself.
-3. Create the export and wait for Google's email saying it is ready (this can
-   take hours or days for a large mailbox), then download the archive.
-4. Unpack it. The mailbox is a single `.mbox` file inside the `Takeout/Mail/`
-   folder (in an English-language account it is usually called
-   `All mail Including Spam and Trash.mbox`; the name depends on your
-   account's language). It can be several gigabytes.
-
-Google's menus change from time to time; if the wording differs, look for
-the Mail (Gmail) product in Takeout's product list and its format options.
-
-## Setup
-
-```
-git clone https://github.com/Igman/flighty_exporter.git
-cd flighty_exporter
-uv sync
-cp flighty_exporter.example.toml flighty_exporter.toml
-```
-
-Then edit `flighty_exporter.toml`. Two settings matter for everyone: near
-the top, uncomment `mailbox` and set it to your mbox file; and under the
-existing `[passenger]` section, replace `names = []` with your name variants
-(edit the lines in place; do not add a second `[passenger]` section, which is
-a TOML error). The result looks like this:
-
-```toml
-mailbox = "/path/to/Takeout/Mail/All mail Including Spam and Trash.mbox"
-
-[passenger]
-names = ["Jordan Ellis", "Jordan A. Ellis"]
-```
-
-Relative paths in the config file are resolved against the file's own
-directory. Every command looks for `flighty_exporter.toml` in the current
-directory (or takes `--config FILE`), so run them from the clone. The tool
-then writes its files next to the config, where `.gitignore` covers them.
-
-**Name variants.** List your name as it appears on bookings, with and
-without a middle name, a maiden name, and so on. Matching ignores case,
-accents, word order, punctuation and titles (Mr, Mrs, Dr, Herr, Mme, ...), so
-`ELLIS/JORDAN MR`, `Ellis, Jordan` and `Jördan Éllis` all match
-`Jordan Ellis`. A passenger matches when every word of one of your variants
-is in the passenger's name (extra middle names on the ticket are fine), or
-when the passenger's name has at least two words and all of them are in your
-variant (a ticket that leaves out your middle name). There is no fuzzy or
-initial matching. A booking whose passengers include none of your names is
-left out of the review table; `review` lists what it dropped. A booking that
-names no passenger at all is kept and flagged. With no names configured,
-passenger filtering is off and other people's bookings are kept.
-
-One limitation: names are split into words at anything that is not a letter,
-so a hyphenated surname written run together on a ticket does not match. If
-you are configured as `Ana Garcia-Lopez` and an airline writes
-`GARCIALOPEZ/ANA`, add the variant `Ana Garcialopez`.
-
-All other settings have defaults; see the
-[configuration reference](#configuration-reference).
-
-## The workflow
-
-Run the commands in this order, from the clone:
-
-```
-uv run flighty-exporter classify
-uv run flighty-exporter extract
-uv run flighty-exporter audit        # optional, but recommended
-uv run flighty-exporter review
-# edit review.csv in a spreadsheet
-uv run flighty-exporter export
-```
-
-![Data flow between the five commands: the mbox file feeds classify, extract and audit, which read and write the store; review reads the store and writes review.csv; export reads review.csv and writes the import file for Flighty.](docs/pipeline.svg)
-
-The commands never call each other. Everything passes through two hand-offs:
-the store (one SQLite file), which carries results from `classify` to
-`extract`, `audit` and `review`; and the review table (`review.csv`), which
-carries your decisions from `review` to `export`. Dashed arrows show that
-`extract` and `audit` go back to the mbox for message bodies.
-
-`uv run` installs everything on first use, so after installing uv and Ollama
-this is the only command you need. Every model command can be stopped with
-Ctrl-C and resumed by running it again: each result is saved as soon as it is
-known, so an interruption loses at most the message in progress. The model
-commands check, just before their first model request, that Ollama is running,
-is version 0.35.0 or later and has the model they need, and stop with an
-instruction if not.
-
-Progress, with the time per message and an estimate of the time remaining, is
-shown on stderr while the model commands run.
-
-### The application
-
-```
-uv run flighty-exporter
-```
-
-With no command, in a terminal, the tool opens a full-screen application
-that carries you through the whole job in order: setup (first launch) or the
-startup prompt (later launches), the run, the review, and the export. It
-reads and writes the same config file as the commands (`--config` works as
-for them). The same rule as the commands keeps email on this machine: a
-non-local Ollama address is refused unless the config file allows it.
-
-**First launch: setup.** With no session yet (no store), the application
-starts with setup, filled in from the config file if there is one. It asks
-three things: the mailbox file (checked to exist and to look like an mbox; a
-folder, a Takeout folder or a zip file is refused with what to point at
-instead), your name variants (empty turns passenger filtering off and keeps
-every booking), and Quick or Thorough. Ctrl-S writes them to the config file,
-which is created if needed; every other setting, comment and section in it is
-left as it was. Setup then checks the model server: a server that is not
-running or too old is shown with the same message as the commands and `c`
-checks again; a missing model is shown with its approximate size, and `d`
-downloads it through Ollama after you confirm, with a progress bar (quitting
-during a download is fine: Ollama keeps the partial download). When
-everything is ready, `s` starts the run. There is no settings screen:
-changing a setting means starting fresh.
-
-**Later launches: resume or start fresh.** When a session exists, the
-application describes it (the mailbox and whether it is still there, how far
-each stage got, the threshold in use, when it last ran, whether it is
-complete) and asks: `r` resumes (an unfinished run carries on; a finished one
-opens its review directly, which needs only the store, not the mailbox), `f`
-starts fresh. Starting fresh asks once, listing
-what would be lost and what is kept, deletes what `run --fresh` deletes, and
-shows setup with your previous answers filled in.
-
-**The run.** The progress screen runs the same stages as `run` (classify,
-extract and review; audit and include too for Thorough) and shows them live:
-every stage with its state, a progress bar for the running stage with the
-messages done, the time per message and the time remaining, running counts,
-and the end-of-run report when it finishes. Keys: `p` pauses after the
-message in progress and continues; `q` quits after the message in progress
-(`q` or Ctrl-C again quits at once), and the next launch carries on where it
-stopped; `r` retries after a model-server problem, once you have fixed it.
-
-**Reviewing in the application.** When the run has finished, press `enter`
-to review the flights (only a complete run is reviewed: not after a pause or
-a problem). The review screen shows a table of flights (date, flight number,
-route, airline, booking reference, evidence, keep, whether you corrected it,
-and its attention reasons), flights needing attention first; the totals
-(flights, kept, not kept, needing attention) and the active filters above
-it; and below it the selected flight in full: its keep and whether that is
-the pre-set value or your choice, each attention reason marked blocking or
-advisory, any correction next to the value the tool found, and its source
-emails. Keys: space (or `k`) keeps or drops the selected flight; `enter`
-shows the saved text of its source emails; `c` corrects its date, flight
-number, origin or destination (checked like any other flight; `enter`
-saves, `escape` cancels); `u` clears your decision on it; `f` shows only
-flagged flights, `n` only flights not kept, `y` steps through the years;
-`d` lists the bookings dropped as other passengers', `x` the emails that
-could not be read; `e` moves on to export; `q` quits. Every decision is
-saved in the store the moment you make it, so it is there when you come
-back, and `review` and `export` use it too. The `flights` and `decide`
-commands (see [4. review](#4-review)) show and make the same decisions from
-the command line.
-
-**Exporting in the application.** Press `e` in the review: the export screen
-writes the import file for Flighty from the flights you kept, through the
-same code as `export --from-store`. It first shows what the export would do: how many flights go in
-the import file, how many must be added by hand and how many are not kept.
-Keys: `e` (or Enter) writes the files and shows the import file's full path
-and the steps for importing it into Flighty; `o` shows the file in Finder
-(macOS; elsewhere the screen says which folder it is in); space ticks the
-selected flight on the manual-add checklist (date, route, flight number,
-reason) once you have entered it in Flighty, saved at once and written to
-`manual-add.csv`; `b` goes back to the review, where you can change a decision
-and export again (each export writes a new import file named with the time);
-`q` quits. Nothing is sent to Flighty or anywhere else: the screen only writes
-local files.
-
-**Setup as commands.** The setup steps are also available as commands, for scripts:
-
-```
-uv run flighty-exporter setup --mailbox PATH [--name NAME ...] [--thoroughness quick|thorough] [--check]
-uv run flighty-exporter pull-models [--yes]
-```
-
-`setup` checks and writes the three answers exactly as the setup screen does
-(nothing is written if one is refused; a mailbox inside the config file's
-folder is written as a relative path), and with `--check` then reports
-whether the model server is ready: on this machine, reachable, version, and
-each model pulled or missing with its approximate size (exit status 1 if not
-ready). `pull-models` lists the configured models the server lacks with
-their approximate sizes (`nimble` about 9.3 GB, `gemma4:12b-it-q4_K_M` about
-8 GB; other models' sizes are not known until the download starts), and with
-`--yes` downloads them through the server, printing progress. Both honour
-the same locality rule, and take `--allow-remote` like the model commands.
-
-Outside a terminal (piped, or run from a script), the bare command prints the
-usage line and exits with status 2, as before.
-
-### All in one go: run
-
-```
-uv run flighty-exporter run
-```
-
-`run` performs classify, extract and review in that order, printing each
-stage's start, its usual progress and summary, and then an end-of-run report:
-flights found, how many need attention and why, bookings cancelled, replaced
-and dropped as other passengers', saved decisions discarded because their
-flight is no longer produced (when there are any), messages that failed in
-each stage, PDFs not read, where each file was written, and the next step
-(check the review table, then run `export`). Its review step is `review`'s:
-the table reflects your saved decisions. It takes `--mailbox`, `--store`, `--allow-remote`,
-review's `--output`, `--failures` and `--force`, and `--thoroughness`
-(`quick`, the default, runs no audit; `thorough` is described below).
-
-Like the single commands, `run` resumes where it stopped: rerun it after Ctrl-C
-(exit status 130) and no finished message is sent to a model again. A
-`SIGTERM` (`kill`) asks it to stop after the message in progress (exit status
-143). A model-server problem stops it with the same message the single
-commands print and exit status 1; it never asks a question. If the review
-table exists and you have edited it, `run` leaves it as it is, says so, and
-still reports the flights; pass `--force` to regenerate it.
-
-**Thorough mode** (`run --thoroughness thorough`, or `thoroughness =
-"thorough"` under `[run]`) adds two stages between extract and review. First
-it runs the [audit](#3-audit-recommended) with your `[audit]` sample size and
-seed, printing its report and writing `audit.csv`. If a sampled message below
-the threshold contained flights, it takes the lower edge of the lowest such
-band as the suggested threshold and counts the messages that lowering to it
-would add and that have no extraction yet. If that count is at most
-`[audit] auto_include_budget` (default 2000), the run lowers the threshold for
-this session and extracts those messages (the ones the audit already
-extracted are not sent again), so their flights appear in the review table.
-Over the budget nothing changes, and the report says what was found, how many
-messages including it would add, and how to include them. The end-of-run
-report has a "check for missed flight emails" section saying which of these
-happened (a Quick run says the check was skipped). This happens once per run;
-a later Thorough run audits again against the lowered threshold, which costs
-little because the sample is the same and finished messages are reused.
-
-The lowered threshold is the session's **effective threshold**: it is stored
-in the store, never written to your config file, and used by every later
-`extract`, `audit`, `review`, `export` and `sources` on that store. Whichever
-is lower wins: setting `[classify] threshold` below the effective threshold
-takes effect, but raising it above the effective threshold does not raise the
-session's threshold again. A Thorough run stopped while it extracts the newly
-included messages keeps the lowered threshold; the next `run` or `extract`
-extracts the rest.
-
-#### Sessions: describing one and starting fresh
-
-A session is the store plus the files the tool wrote from it. The store
-records the mailbox and settings the session was started with (by the first
-command that brought a mailbox to it; later runs with other settings do not
-change them), when it was last active, and every file the tool writes for it:
-the review table, the failures file, the audit report, each import file and
-the manual-add list.
-
-```
-uv run flighty-exporter session
-uv run flighty-exporter session --fresh-preview
-```
-
-`session` prints the mailbox (and whether it still exists), the settings, when
-the session started and was last active, how far each stage got (messages
-recorded, classified, resolved from machine-readable data, at or above the
-threshold in use, extracted, flights and flights with a saved decision), whether it
-looks complete, the files it wrote that still exist, and what starting fresh
-would lose. The threshold in use is the effective threshold; when a Thorough
-run lowered it, `session` says so and shows the configured value too (for
-example `0.02 (lowered for this session from the configured 0.05)`). It reads only the store, and with no store prints
-`No session yet.` `--fresh-preview` lists what starting fresh would delete,
-without deleting anything.
-
-`run --fresh` starts fresh without asking: it deletes the files recorded as
-written for the session that still exist, and only those, then the store and
-its SQLite side files (`-wal`, `-shm`, `-journal`), printing a line for each,
-and then runs from scratch. It never deletes the mailbox, the config file,
-downloaded models, the cached OpenFlights data, or anything the tool did not
-record writing, such as your own files in the same folder; a recorded path
-that is no longer a regular file is left alone. A store created before
-sessions were recorded knows none of the files it wrote, so starting fresh
-deletes just the store and says so. Without `--fresh`, `run` resumes. The effective threshold lives in the store,
-so starting fresh clears it too: `run --fresh --thoroughness thorough` starts
-again from the configured threshold and audits anew.
-
-### 1. classify
-
-```
-uv run flighty-exporter classify
-```
-
-Reads every message in the mailbox (or the file given with `--mailbox PATH`):
-
-- Messages under the Gmail labels Spam, Trash, Drafts and Chat are skipped.
-- A message that carries machine-readable flight data (schema.org
-  FlightReservation markup, which many airlines embed for Gmail, or a flight
-  calendar `.ics` attachment) is read directly, with no model, and its flights
-  go straight to the review table with confidence 1.0. Incomplete markup is
-  ignored and the message is classified like any other.
-- Every other message is sent to the decision model (`nimble`) with its
-  sender, subject, attachment filenames and the start of its body (PDF text is
-  not sent at this stage). The model answers two questions: a yes/no gate,
-  "does this email contain flight details for a specific booking?", as a
-  probability; and the email type, one of `booking confirmation`, `change`,
-  `cancellation`, `check-in or boarding pass`, `post-flight`, `marketing` or
-  `other`.
-
-Both answers are stored for every message. The gate threshold
-(`[classify] threshold`, default 0.05) is not applied here, only when
-`extract` selects messages, so changing it never requires classifying again.
-
-At the end it prints a summary: messages in the mailbox, classified, already
-classified (from an earlier run), resolved from machine-readable data,
-skipped, failed, and then, for everything stored for the decision model, how
-many messages are at or above the threshold, how many have a gate of at least
-0.5, 0.2 and 0.05, and the count per email type.
-
-Time: about 0.7 seconds per message on the tested machine, so roughly 10 hours
-per 50,000 messages. Run it over several sessions if you like.
-
-### 2. extract
-
-```
-uv run flighty-exporter extract
-```
-
-Sends each message whose gate is at or above the threshold, and that has no
-extraction yet, to the extraction model (`gemma4:12b-it-q4_K_M`). The model
-reads the whole cleaned body plus the text layer of any PDF attachment (up to
-`[extract] max_input_chars` characters in total) and returns the email kind
-(`booking`, `change`, `cancellation`, `check-in` or `other`), the booking
-reference, the passenger names, and each flight segment: local departure
-date, airline, flight number, origin and destination airport codes, and a
-confidence value. Every answer is checked against the expected structure; an
-invalid or cut-off answer is retried (`[extract] retries`, default 2) and then
-recorded as a failure. Failed messages are tried again the next time you run
-`extract`.
-
-`extract` (and `audit`) read only the messages they send: `classify` records
-where each message sits in the mbox file, and they go straight there instead
-of reading the whole mailbox again. If the mbox file has changed since
-`classify` (a new export), or the store was made by an earlier version, they
-first scan the mailbox's headers once to find the messages again (shown as
-`extract: locating messages`) and remember what they found.
-
-The summary lists how many messages were selected (`selected (gate >= 0.05)`),
-extracted, already extracted, retried, failed, not found in the mailbox, cut at
-the input limit (`inputs truncated`) and PDFs that could not be read, and then
-the segments and email kinds stored for the extraction model.
-
-Time: about 3 seconds per message, but only for the small fraction of the
-mailbox that passed the gate.
-
-### 3. audit (recommended)
-
-```
-uv run flighty-exporter audit
-```
-
-The decision model's probabilities are not calibrated, so the audit checks
-whether real flight emails are hiding below the threshold. It divides the
-classified messages into gate-probability bands (`[0, 0.001)`,
-`[0.001, 0.005)`, `[0.005, 0.01)`, `[0.01, 0.02)`, `[0.02, 0.05)`,
-`[0.05, 0.1)`, `[0.1, 0.2)`, `[0.2, 0.5)`, `[0.5, 1]`), samples up to
-`[audit] sample_size` messages (default 25) from each band, including the bands
-below the threshold, sends the sampled ones that have no extraction yet to the
-extraction model, and reports per band how many contained flight segments.
-
-Reading the report:
-
-- The table under `All classified messages` has one row per band, highest
-  first: `messages` in the band, `sampled`, `failed` extractions,
-  `with segments` (sampled messages that contained a flight), the `hit rate`,
-  and `est. flight emails` (hit rate times band size). A line marks where the
-  threshold falls: bands above it are extracted, bands below are not.
-- The table under `Messages with a PDF attachment` repeats this for messages
-  with a PDF attachment only. PDF-only e-tickets are the known blind spot,
-  because the decision model never sees PDF text.
-- `Sampled messages below the threshold that contained flight segments` lists
-  each such message with its gate, date, sender, subject and the segments
-  found.
-- The reading line sums it up, for example
-  `Reading: the lowest band with a hit is [0.01, 0.02) (gate 0.0132); [classify] threshold = 0.01 would include it (now 0.05).`
-  or `Reading: no sampled message below the threshold 0.05 contained flight segments; ...`.
-
-The audit never changes the config. If the reading suggests it, lower
-`threshold` under `[classify]` in your config file yourself and run `extract`
-again: only the newly included messages are sent, and messages the audit
-already extracted are not sent again. The same seed (`[audit] seed`,
-`--seed`) gives the same sample, so rerunning the audit sends nothing new.
-The report is also written to `audit.csv`. (A Thorough `run` acts on the
-reading for you, within a budget, by lowering the threshold for the session
-only; see [All in one go: run](#all-in-one-go-run).)
-
-Time: up to roughly 450 extraction requests at the default sample size (25
-messages for each of 9 bands, twice: once for all messages and once for
-messages with a PDF), about 3 seconds each. Use `--sample-size` for a quicker
-look.
-
-### 4. review
-
-```
-uv run flighty-exporter review
-```
-
-Takes no model and runs in seconds. It consolidates the extraction records of
-every message at or above the threshold, and of every message resolved from
-machine-readable data, into one row per flight, and writes the review table
-(`review.csv`) and the failures file (`failures.csv`).
-
-How flights are put together:
-
-- **Bookings.** Emails sharing a booking reference are one booking. An email
-  with no booking reference joins a booking that already has the same flight
-  (date and flight number); otherwise it forms its own booking.
-- **Cancelled.** A cancellation email removes every flight the booking has so
-  far. A later booking or change email under the same reference brings flights
-  back (a rebooking).
-- **Replaced, per leg.** A flight in a later booking or change email replaces
-  earlier flights of the booking with the same origin and destination. Legs the
-  later email does not mention are kept.
-- **Filtered by passenger.** A booking whose passengers include none of your
-  name variants is dropped, with all its flights; the summary lists each
-  dropped booking.
-- **Duplicates.** The same flight from several bookings or emails (same date
-  and flight number, or same date and route when there is no flight number)
-  appears once.
-- **Evidence.** A flight is `confirmed` when a check-in, boarding-pass or
-  post-flight email exists for it, and `booked only` otherwise. Evidence is
-  for your judgement; it never removes a row.
-
-The review table's columns:
-
-| Column | Meaning |
-| --- | --- |
-| `keep` | `yes` or `no`, pre-filled by the tool. Only `yes` rows are exported. |
-| `needs_attention` | `yes` when the row has at least one attention reason. |
-| `attention_reason` | Every reason, joined with `; `, blocking reasons first. |
-| `date` | Local departure date at the origin, `YYYY-MM-DD`. |
-| `flight_number` | With the airline's two-character prefix, e.g. `BA286`. |
-| `airline` | As the email names it. |
-| `origin`, `destination` | Airport codes. |
-| `booking_reference` | Joined with `; ` when merged from several bookings. |
-| `passengers` | Every passenger the booking names, joined with `; `. |
-| `confidence` | 0 to 1, after the penalties described below. |
-| `evidence` | `confirmed` or `booked only`. |
-| `email_kind` | The kind of the most recent email about this flight. |
-| `source` | `markup`, `model`, or `markup; model`. |
-| `source_count` | How many emails mention the flight. |
-| `message_id`, `message_date`, `message_subject` | The most recent of those emails, so you can find it in Gmail. |
-| `source_messages` | Every one of those emails, as `YYYY-MM-DD subject`, joined with ` \| `. |
-| `flight_id` | The flight's identity as the tool first found it: date and flight number (`2025-05-12 ZZ1234`), or date and route when there is no flight number (`2025-08-01 OSL-LIS`). It does not change when you correct the row, so export can match your edits to the flight even if you re-sort the rows. Leave it as it is. |
-
-**Your decisions are saved in the store.** When `export` reads an edited
-table, it records your keep choices and corrections in the store (see
-[export](#6-export)). The next `review` writes the table from the flights with
-those decisions applied: corrected values, your keep choice, and attention
-reasons recomputed from the corrected values (a correction to an unknown
-airport is flagged like any other). Your keep choice wins over the pre-set
-one. A decision follows the latest result: if a later run no longer produces
-a flight (say a cancellation email was found), its decision is discarded, and
-the summary line `decisions discarded because their flight is no longer
-produced` counts them.
-
-There are two kinds of attention reason.
-
-**Blocking** reasons pre-set `keep` to `no`. Turn the row back to `yes` if
-you check it and it is right (correcting the field if needed):
-
-- `unknown airport XXX`: the code is not in OpenFlights' airport data.
-- `unknown airline XX`: no airline in OpenFlights' data has this prefix.
-- `malformed flight number`: not a two-character airline code followed by 1 to
-  4 digits and an optional letter.
-- `origin and destination are the same`
-- `implausible date`: before 1990, or more than 400 days after the latest
-  email about the flight.
-- `low confidence`: the confidence, halved once for each reason above, is
-  below `[review] min_confidence` (default 0.7).
-
-**Advisory** reasons leave `keep` at `yes` but ask you to look:
-
-- `no flight number`: export puts the flight on the manual-add list.
-- `email was truncated before extraction`: the email was longer than the
-  extraction input limit, so part of it was not read.
-- `no passenger named`: the booking names no passenger, so the tool cannot
-  tell whether it is yours.
-
-Airport and airline codes are checked against OpenFlights' reference data,
-which `review` downloads on first use. If it cannot be loaded, the table is
-still written without the code checks and a warning says why.
-
-The summary lists the flights, how many are confirmed and booked only, how
-many need attention and are pre-set to not keep, the count per attention
-reason, bookings cancelled, bookings with replaced segments, the bookings
-dropped as being for other passengers (reference, passengers, number of
-flights and first date), and the failures.
-
-**The failures file** lists, with message ID, date, sender, subject and
-reason, every message at or above the threshold that produced no valid
-extraction (the model's answer was invalid after the retries, or the message
-was not extracted yet), and every PDF attachment that could not be read
-(image-only, encrypted, too large or unreadable). These are the emails to look
-up in Gmail and, if they are flights, add by hand.
-
-**Overwrite protection.** `review` remembers the table it wrote. Run again,
-it overwrites the table only if you have not changed it since; if you have
-edited it, it stops with an error rather than lose your edits. Use
-`--force` to overwrite it anyway, or `--output FILE` to write elsewhere.
-
-**Reading a flight's emails.** `extract` (and `classify`, for messages with
-machine-readable flight data) saves in the store the text of every email that
-yielded a flight record: sender, subject, date, the cleaned body and the text
-of readable PDF attachments. Only those emails, never the whole mailbox. To
-check a flight against its emails, without the mbox file:
-
-```
-uv run flighty-exporter sources                                 # every flight review lists
-uv run flighty-exporter sources --flight 2025-05-12 ZZ1234      # one flight
-uv run flighty-exporter sources --flight 2025-05-12 ZZ1234 --no-text   # just its emails' dates and subjects
-```
-
-It prints each flight (date, flight number, route), then each source email's
-date and subject followed by its saved text. The flights are the ones `review`
-would write, with your saved decisions applied, so a corrected flight is shown
-(and picked with `--flight`) under its corrected values; `sources` only reads
-the store and never discards a decision. For a flight with no flight
-number, give its route instead (`--flight 2025-05-12 LIS-OSL`). Flights
-extracted by an earlier version of the tool show
-`source text unavailable (extracted before text was saved)`; extracting them
-again (for example with another extraction model) saves the text.
-
-**The flight list and single decisions from the command line.** `flights`
-prints the flights as the application's review screen shows them: the
-totals, the years present, a table with flights needing attention first
-(blocking reasons before advisory ones, then by date and flight number),
-then the bookings dropped as other passengers' and the emails that could not
-be read. `decide` makes one decision, saves it in the store at once and
-prints the flight's new state. Pick the flight by the date and flight number
-it now shows (or `--route ORIGIN DEST` for a flight without a number), as
-for `mark-added`:
-
-```
-uv run flighty-exporter flights                       # every flight
-uv run flighty-exporter flights --flagged --year 2025 # filters combine; also --not-kept
-uv run flighty-exporter decide 2025-06-01 QQ410 --drop   # or --keep
-uv run flighty-exporter decide 2025-07-01 ZZ300 --set destination=OSL --set date=2025-07-02
-uv run flighty-exporter decide 2025-07-02 ZZ300 --reset  # clear the keep choice and corrections
-```
-
-A keep choice equal to the pre-set value saves nothing (and removes an
-earlier choice). `--set` takes `date`, `flight_number`, `origin` or
-`destination`; codes are upper-cased and flight numbers lose spaces and
-hyphens, a value equal to what the tool found removes that correction, and
-an unreal date or an empty airport is refused without saving anything. A
-following `review --force` or `export --from-store` uses what `decide`
-saved.
-
-### 5. Edit the review table
-
-Open `review.csv` in a spreadsheet (Numbers, Excel, LibreOffice). For each row:
-
-- Leave `keep` as it is if you agree, or change it. `yes`, `y`, `true`, `1`
-  and `x` count as keep; `no`, `n`, `false`, `0` and an empty cell count as do
-  not keep (case is ignored). Any other value is reported and the row skipped.
-- Correct `date`, `flight_number`, `origin` or `destination` in place if they
-  are wrong. The export uses your corrections. Dates must stay `YYYY-MM-DD`;
-  spreadsheets like to reformat them, so check the column before saving.
-
-Only `keep`, `date`, `flight_number`, `origin` and `destination` are used by
-the export (and `message_date` and `message_subject`, if present, for the
-manual-add list). The usual re-save changes are tolerated: reordered or extra
-columns, column headers with different case or stray spaces, other quoting
-and line endings, a comma, semicolon or tab as the field separator, and blank
-rows at the end. Save as CSV in UTF-8
-("CSV UTF-8" in Excel).
-
-### 6. export
-
-```
-uv run flighty-exporter export
-```
-
-Reads the edited review table (or the store, see below) and writes, in the config file's directory
-(or `--output-dir DIR`):
-
-- **The import file**, `openflights-backup-YYYY-MM-DD-HHMM.csv` (the time is
-  UTC): every kept row Flighty can match, in OpenFlights' backup format.
-- **The manual-add list**, `manual-add.csv`: kept rows that cannot go in the
-  import file, with `date`, `origin`, `destination`, `flight_number`,
-  `reason`, `message_date`, `message_subject` and `done` (see below). The reason is one or more
-  of:
-  - `no flight number`
-  - `dated before 2006` (Flighty has no records before 2006)
-  - `airport XXX not in OpenFlights data`
-  - `no OpenFlights airline for prefix XX`
-
-It prints a summary: where each file was written, `flights exported`,
-`flights to add by hand`, and for the review table the number of `rows`, how
-many were `not kept`, and how many were `rejected as invalid`, with the row
-number (the header is row 1) and reason for each: a `keep` value that is not
-yes or no, a date that is not a real `YYYY-MM-DD` date, or an empty origin or
-destination. Rejected rows are left out of both files; fix them and run
-`export` again. It takes a second.
-
-Where `export` reads the flights from, in this order:
-
-1. **A review table**, given with `--review FILE` or present at the configured
-   path (`review.csv`): read as described above. If the store exists (or
-   `--store FILE`), each row's `keep`, `date`, `flight_number`, `origin` and
-   `destination` are first recorded in it as decisions, matched by
-   `flight_id`, but only where they differ from what the tool produced; the
-   summary counts them (`decisions recorded from the review table`). Rows
-   without a `flight_id` (a table from an older version, or one you made by
-   hand) are exported but record nothing, and with no store the table is
-   simply exported.
-2. **The store**, when there is no review table: the flights with your saved
-   decisions applied, the same rows `review` would write. This gives the same
-   import file as exporting the table `review` would write.
-3. **`--from-store`** forces the store even when a review table exists.
-
-`export --from-store --dry-run` prints what exporting from the store would do
-and writes nothing: how many flights would go in the import file and to the
-manual-add list and how many are not kept, then each flight for the import
-file and each manual-add flight with its reason and tick (`[x]`).
-
-The summary's `source of the export` line says which was used.
-
-The manual-add list has a last column, `done`: `yes` for a flight you have
-marked as entered in Flighty by hand, so you can work through the list over
-several sittings. Mark one with its date and flight number as the list shows
-them, or `--route ORIGIN DEST` for a flight without a number; `--undo` removes
-the mark. A manual-add list an export has already written for the session
-is updated at once (`mark-added` prints `Manual-add list updated: PATH`); the
-import file is not touched.
-
-```
-uv run flighty-exporter mark-added 2004-08-01 ZZ9
-uv run flighty-exporter mark-added 2025-08-01 --route OSL LIS
-uv run flighty-exporter mark-added 2004-08-01 ZZ9 --undo
-```
-
-## Importing into Flighty
-
-What was verified (November 2026, with a file generated by this tool's export
-format):
-
-- In the Flighty app, go to Settings, Import Flights, and choose OpenFlights.
-  Flighty's import works by emailing the file to an address the app gives you;
-  attach the `openflights-backup-...csv` file to that email.
-- Flighty accepted the generated file and imported its flights, including one
-  older than a year (that needs Flighty Pro). The direction of each flight was
-  preserved.
-- A flight Flighty already had was not imported a second time.
-
-Be aware: Flighty documents support only for files exported directly by
-OpenFlights. This tool writes a file in OpenFlights' backup format without
-going through OpenFlights. It was accepted when tested, but it may stop
-working if Flighty changes its checks.
-
-Flights on the manual-add list are entered by hand in Flighty, which needs
-only the two airports and the date.
+Takeout archives. It cannot know names you choose yourself (with
+`--output`, `--store`, `--review`, `--output-dir`, `--config` or the config
+file): keeping those out of version control is up to you.
 
 ## Performance
 
 Measured on an Apple M5 Pro with 24 GB of RAM:
 
-- **classify**: about 0.7 seconds per message, so about 10 hours per 50,000
-  messages. It is resumable, so it can run over several sessions.
-- **extract**: about 3 seconds per message, but only for the small fraction of
-  messages that pass the gate.
-- **audit**: up to roughly 450 extraction requests at the default sample size.
-- **review** and **export**: seconds.
+- **Classification:** about 0.6 to 0.7 seconds per message. This is the long
+  part: about 10 hours per 50,000 messages.
+- **Extraction:** about 3 seconds per selected message, for the small
+  fraction of the mailbox that passes the gate.
+- **The check for missed flight emails** (Thorough): about 2 seconds per
+  sampled message; at the default sample size, at most 450 extractions
+  (25 for each of 9 bands, for all messages and again for messages with a
+  PDF), minus those already extracted.
+- **Review and export:** seconds.
 
-Time per message depends on message length. On the same machine, the
-synthetic test mailbox (200 messages, see [Development](#development)) took
-4 minutes 19 seconds to classify (1.33 s per message), 1 minute 38 seconds to
-extract its 16 selected messages (6.1 s per message) and 6 minutes for the
-audit (77 extractions at 4.6 s each).
+A Thorough run of the 200-message synthetic mailbox (see
+[Development](#development)) took 5 minutes 20 seconds. Time per message
+depends on message length. For a large mailbox, plan on classification
+spanning several sittings: every result is saved as it is known, so quitting
+(or a closed laptop) loses at most the message in progress. The progress
+screen's time remaining is computed from the current run's rate.
+
+## Command reference
+
+Every command takes `--config FILE` before the command name
+(`uv run flighty-exporter --config ~/flights/flighty_exporter.toml run`);
+without it, `./flighty_exporter.toml` is used if present, else the built-in
+defaults. Exit status: 0 on success, 1 on an error, 2 on a usage error, 130
+after Ctrl-C. Every model command can be stopped with Ctrl-C and resumed by
+running it again. Before its first model request it checks that Ollama is
+local, running, version 0.35.0 or later and has the model it needs, and
+stops with an instruction if not. Progress (time per message and time
+remaining) goes to stderr.
+
+### run
+
+```
+uv run flighty-exporter run [--mailbox MAILBOX] [--store STORE] [--allow-remote]
+    [--thoroughness {quick,thorough}] [--output OUTPUT] [--failures FAILURES] [--force] [--fresh]
+```
+
+The application's run without the screen, for scripts and SSH: classify,
+extract (Thorough: audit and include), then review, printing each stage's
+start, progress and summary, then the end-of-run report, ending with the
+files written and `Next step: check <path>/review.csv, then run export.` It
+resumes an
+existing session by default and never asks a question. `--thoroughness`
+overrides `[run] thoroughness`. `--output` and `--failures` set the review
+table and failures file; an edited review table is left as it is (the report
+says so) unless `--force`. `--fresh` starts fresh without asking (deleting
+what [starting fresh](#resume-or-start-fresh-later-launches) deletes,
+printing a line for each) and then runs from scratch. A model-server problem
+stops it with the commands' message and status 1; Ctrl-C stops it with 130
+and `kill` (SIGTERM) after the message in progress with 143.
+
+### classify
+
+```
+uv run flighty-exporter classify [--mailbox MAILBOX] [--store STORE] [--allow-remote]
+```
+
+Reads every message, resolving machine-readable flight data directly and
+sending every other message to the decision model; stores both answers.
+Prints the messages in the mailbox, classified, already classified,
+resolved from machine-readable data, skipped and failed, then for the stored
+results how many are at or above the threshold, how many have a gate of at
+least 0.5, 0.2 and 0.05, and the count per email type.
+
+### extract
+
+```
+uv run flighty-exporter extract [--mailbox MAILBOX] [--store STORE] [--allow-remote]
+```
+
+Sends each message at or above the threshold that has no extraction yet to
+the extraction model. If the mbox file has changed since classify (a new
+export) or the store predates message positions, it first scans the
+mailbox's headers once (`extract: locating messages`). Prints the messages
+selected (`selected (gate >= 0.05)`), extracted, already extracted,
+retried, failed, not found in the mailbox, inputs truncated and PDFs not
+read, then the segments and email kinds stored.
+
+### audit
+
+```
+uv run flighty-exporter audit [--mailbox MAILBOX] [--store STORE] [--sample-size SAMPLE_SIZE]
+    [--seed SEED] [--output OUTPUT] [--allow-remote]
+```
+
+The check for missed flight emails on its own (see
+[Thoroughness](#thoroughness)). Prints a table per band for all classified
+messages and for messages with a PDF attachment (`messages`, `sampled`,
+`failed`, `with segments`, `hit rate`, `est. flight emails`), the sampled
+messages below the threshold that contained flights, and a reading such as
+`Reading: the lowest band with a hit is [0.01, 0.02) (gate 0.0132); [classify] threshold = 0.01 would include it (now 0.05).`
+It never changes the config: lower the threshold yourself and run extract
+again, which sends only the newly included messages not already extracted.
+The same seed gives the same sample. The report is also written to
+`audit.csv` (`--output`).
+
+### review
+
+```
+uv run flighty-exporter review [--store STORE] [--output OUTPUT] [--failures FAILURES] [--force]
+```
+
+No model; seconds. Builds the flight list (consolidation, validation, saved
+decisions) and writes the review table and the failures file, then prints
+the flights, confirmed and booked only, needing attention and pre-set to not
+keep, the count per reason, bookings cancelled and with replaced segments,
+the bookings dropped as other passengers', and the failures. It overwrites
+the review table only if you have not edited it since it wrote it; use
+`--force` to overwrite anyway or `--output` to write elsewhere.
+
+The failures file lists (message ID, date, sender, subject, reason) every
+message at or above the threshold with no valid extraction, and every PDF
+attachment that could not be read (image-only, encrypted, too large or
+unreadable).
+
+### export
+
+```
+uv run flighty-exporter export [--review REVIEW] [--output-dir OUTPUT_DIR] [--store STORE] [--from-store] [--dry-run]
+```
+
+Writes the import file and the manual-add list (columns `date`, `origin`,
+`destination`, `flight_number`, `reason`, `message_date`,
+`message_subject`, `done`) into the config file's folder or `--output-dir`.
+It reads the flights from, in order: the review table (`--review` or the
+configured `review.csv`), first recording its keep values and corrections in
+the store as decisions, matched by `flight_id`, where they differ from what
+the tool produced; or, with no review table, the store; or the store with
+`--from-store` even when a review table exists. `--from-store --dry-run`
+prints the plan and writes nothing. The summary gives where each file was
+written, `flights exported`, `flights to add by hand`, the `source of the
+export`, the rows read, `not kept`, and `rejected as invalid` with the row
+number and reason of each (a keep value that is not yes or no, a date that
+is not a real `YYYY-MM-DD` date, an empty origin or destination).
+
+### sources
+
+```
+uv run flighty-exporter sources [--store STORE] [--flight DATE FLIGHT] [--no-text]
+```
+
+Prints each flight review would list (date, flight number, route) with its
+source emails' dates and subjects and their saved text, from the store
+alone. `--flight 2025-05-12 ZZ1234` picks one flight (a route such as
+`LIS-OSL` for a flight without a number), under its corrected values if you
+corrected it; `--no-text` leaves the text out.
+
+### flights
+
+```
+uv run flighty-exporter flights [--store STORE] [--flagged] [--not-kept] [--year YYYY]
+```
+
+Prints the flight list as the review screen shows it: the totals, the years
+present, the table in the same order, then the bookings dropped as other
+passengers' and the emails that could not be read. The filters combine.
+Reads only.
+
+### decide
+
+```
+uv run flighty-exporter decide DATE [FLIGHT_NUMBER] [--route ORIGIN DEST]
+    (--keep | --drop | --reset | --set FIELD=VALUE) [--store STORE]
+```
+
+Makes one decision as the review screen does, saves it at once and prints
+the flight's detail. Pick the flight by the date and flight number it now
+shows, or `--route` for one without a number. `--set` takes `date`,
+`flight_number`, `origin` or `destination` (repeat for several), normalised
+as in the review; a value equal to what the tool found clears that
+correction, and an unreal date or empty airport is refused with status 1.
+A keep choice equal to the pre-set value saves nothing. `--reset` clears the
+keep choice and corrections.
+
+```
+uv run flighty-exporter decide 2025-06-01 QQ410 --drop
+uv run flighty-exporter decide 2025-07-01 ZZ300 --set destination=OSL --set date=2025-07-02
+uv run flighty-exporter decide 2025-07-02 ZZ300 --reset
+```
+
+### mark-added
+
+```
+uv run flighty-exporter mark-added DATE [FLIGHT_NUMBER] [--route ORIGIN DEST] [--undo] [--store STORE]
+```
+
+Ticks a flight on the manual-add list as entered in Flighty by hand (`--undo`
+removes the tick), by its date and flight number as the list shows them, or
+`--route` for a flight without a number. A manual-add list an export has
+already written is updated at once (`Manual-add list updated: PATH`); the
+import file is not touched.
+
+### session
+
+```
+uv run flighty-exporter session [--store STORE] [--fresh-preview]
+```
+
+Describes the session from the store alone: the mailbox (and whether it
+still exists), what it was started with, when it started and was last
+active, the messages recorded (messages under Spam, Trash, Drafts and Chat
+are not counted), classified, resolved from machine-readable data, at or
+above the threshold in use, extracted, failed, flights and flights with a
+saved decision, whether it is complete and finished, the threshold in use
+(for example `0.02 (lowered for this session from the configured 0.05)`),
+the files written that still exist, and what starting fresh would lose.
+With no store it prints `No session yet.` `--fresh-preview` lists what
+starting fresh would delete, deleting nothing.
+
+### setup and pull-models
+
+```
+uv run flighty-exporter setup --mailbox MAILBOX [--name NAME ...] [--thoroughness {quick,thorough}] [--check] [--allow-remote]
+uv run flighty-exporter pull-models [--yes] [--allow-remote]
+```
+
+`setup` checks and writes the three answers exactly as the setup screen does
+(nothing is written if one is refused); `--check` then reports whether the
+model server is ready (status 1 if not). `pull-models` lists the configured
+models the server lacks with their approximate sizes, and with `--yes`
+downloads them through the server, printing progress.
+
+### The spreadsheet route
+
+Instead of the application's review you can run the commands and edit the
+review table in a spreadsheet:
+
+```
+uv run flighty-exporter run          # or classify, extract, [audit,] review
+# edit review.csv in Numbers, Excel or LibreOffice
+uv run flighty-exporter export
+```
+
+For each row, leave `keep` as it is or change it (`yes`, `y`, `true`, `1`
+and `x` keep; `no`, `n`, `false`, `0` and an empty cell do not; case is
+ignored; anything else is reported and the row skipped), and correct `date`,
+`flight_number`, `origin` or `destination` in place, normalised as in the
+review. Dates must stay `YYYY-MM-DD`; spreadsheets like to reformat them, so
+check the column before saving. Leave `flight_id` as it is: it is how your
+edits find their flight. Only `keep`, the four correctable fields,
+`message_date`, `message_subject` and `flight_id` are read. Reordered or
+extra columns, headers with other case or stray spaces, other quoting and
+line endings, a comma, semicolon or tab separator and blank trailing rows
+are all tolerated. Save as CSV in UTF-8 ("CSV UTF-8" in Excel).
+
+The review table's columns: `keep`, `needs_attention`, `attention_reason`
+(every reason, blocking first, joined with `; `), `date`, `flight_number`,
+`airline`, `origin`, `destination`, `booking_reference`, `passengers`,
+`confidence`, `evidence`, `email_kind` (of the most recent email about the
+flight), `source` (`markup`, `model`, or both), `source_count`,
+`message_id`, `message_date` and `message_subject` (the most recent source
+email, to find it in Gmail), `source_messages` (every source email as
+`YYYY-MM-DD subject`, joined with ` | `) and `flight_id`.
+
+Export records your edits in the store, so the application and a following
+`review` show them; the two routes never disagree.
 
 ## Configuration reference
 
-The config file is TOML. Every setting is optional; the defaults below apply
-when a setting (or the whole file) is missing. Relative paths are resolved
-against the config file's directory (against the current directory when there
-is no config file). An unknown setting is an error.
-
-**Top level**
+The config file is TOML; [`flighty_exporter.example.toml`](flighty_exporter.example.toml)
+lists every setting with its default and a comment. Every setting is
+optional. Relative paths are resolved against the config file's folder (the
+current folder when there is no file). An unknown setting is an error.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `mailbox` | none | The Takeout mbox. Required unless given with `--mailbox` (classify, extract, audit). |
-| `store` | `"flighty_exporter.db"` | SQLite store with every pass's results. Overridden by `--store`. |
+| `mailbox` | none | The Takeout mbox. Needed by `run`, classify, extract and audit unless given with `--mailbox`; setup writes it. |
+| `store` | `"flighty_exporter.db"` | The store. Overridden by `--store`. |
+| `[ollama] address` | `"http://localhost:11434"` | The Ollama server; must be on this machine unless `allow_remote`. |
+| `[ollama] timeout_seconds` | `300` | Per-request timeout for model requests (the server checks use at most 5 seconds). |
+| `[ollama] allow_remote` | `false` | Allow a non-local address (as `--allow-remote`); warns on every run. |
+| `[models] decision` | `"nimble"` | Decision model. Results are stored per model: changing it means classifying again. |
+| `[models] extraction` | `"gemma4:12b-it-q4_K_M"` | Extraction model, also per model. |
+| `[classify] threshold` | `0.05` | Gate probability (0 to 1) at or above which a message is extracted. |
+| `[classify] max_body_chars` | `12000` | How much of the cleaned body the decision model sees; a message still rejected as too long is retried with the body halved, up to 3 times. |
+| `[extract] num_ctx` | `16384` | Context length per extraction request. |
+| `[extract] num_predict` | `1500` | Output cap; an answer that stops at the cap is invalid. |
+| `[extract] retries` | `2` | Retries of an invalid or cut-off answer. |
+| `[extract] max_input_chars` | `36000` | Cap on what the extraction model reads (body, then PDF text). |
+| `[review] output` | `"review.csv"` | Review table. Overridden by `review --output`, `run --output`, `export --review`. |
+| `[review] failures` | `"failures.csv"` | Failures file. Overridden by `--failures`. |
+| `[review] min_confidence` | `0.7` | Confidence (0 to 1) below which a flight is flagged `low confidence`. |
+| `[passenger] names` | `[]` | Your name variants; empty turns passenger filtering off. |
+| `[audit] sample_size` | `25` | Messages sampled per band. Overridden by `--sample-size`. |
+| `[audit] seed` | `1` | Seed for the reproducible sample. Overridden by `--seed`. |
+| `[audit] output` | `"audit.csv"` | Audit table. Overridden by `audit --output`. |
+| `[audit] auto_include_budget` | `2000` | Thorough only: the most not-yet-extracted emails a lowered threshold may add for the run to lower it by itself; `0` lowers it only when the audit already read every one. |
+| `[export] output_dir` | the config file's folder | Where the import file and manual-add list go. Overridden by `--output-dir`. |
+| `[export] data_dir` | `"~/.cache/flighty_exporter/openflights"` | Cache for OpenFlights' data files. |
+| `[export] data_url` | `"https://raw.githubusercontent.com/jpatokal/openflights/master/data/"` | Where they are downloaded from. |
+| `[run] thoroughness` | `"quick"` | `"quick"` or `"thorough"`. Overridden by `run --thoroughness`. |
 
-**`[ollama]`**
+A minimal file (setup writes these three settings):
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `address` | `"http://localhost:11434"` | Ollama server. Must be on this machine unless `allow_remote` is set. |
-| `timeout_seconds` | `300` | Per-request timeout for model requests (the preflight check uses at most 5 seconds). |
-| `allow_remote` | `false` | Allow a non-local address (same as `--allow-remote`). Warns on every run. |
+```toml
+mailbox = "Takeout/Mail/All mail Including Spam and Trash.mbox"
 
-**`[models]`**
+[passenger]
+names = ["Jordan Ellis", "Jordan A. Ellis"]
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `decision` | `"nimble"` | Decision model for classify. Results are stored per model; changing it means classifying again. |
-| `extraction` | `"gemma4:12b-it-q4_K_M"` | Extraction model for extract and audit. Results are stored per model. |
+[run]
+thoroughness = "quick"
+```
 
-**`[classify]`**
+The session records the settings it was started with, but the application
+and every command use the config file as it is when they start. Editing the
+file under an existing session is not supported in the application: start
+fresh instead.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `threshold` | `0.05` | Gate probability (0 to 1) at or above which a message goes to extract. Not applied by classify. A Thorough run may lower it for its session (the effective threshold); the lower of the two applies. |
-| `max_body_chars` | `12000` | How much of the cleaned body the decision model sees. A message the server still rejects as too long is retried with the body halved, up to 3 times. |
+## Known limits and troubleshooting
 
-**`[extract]`**
+### Known limits
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `num_ctx` | `16384` | Context length for each extraction request. |
-| `num_predict` | `1500` | Output cap. An answer that stops at the cap is treated as invalid. |
-| `retries` | `2` | Retries of an invalid or cut-off answer before the message is recorded as a failure. |
-| `max_input_chars` | `36000` | Cap on what the extraction model reads: the body, then PDF text. Cut inputs are flagged in the review table. |
-
-**`[review]`**
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `output` | `"review.csv"` | Review table written by review and read by export. Overridden by `review --output` and `export --review`. |
-| `failures` | `"failures.csv"` | Failures file. Overridden by `review --failures`. |
-| `min_confidence` | `0.7` | Confidence (0 to 1) below which a flight is flagged `low confidence`. |
-
-**`[passenger]`**
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `names` | `[]` | Your name variants. Empty turns passenger filtering off. |
-
-**`[audit]`**
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `sample_size` | `25` | Messages sampled per band. Overridden by `--sample-size`. |
-| `seed` | `1` | Seed for the reproducible sample. Overridden by `--seed`. |
-| `output` | `"audit.csv"` | Audit table. Overridden by `audit --output`. |
-| `auto_include_budget` | `2000` | Thorough runs only: the most not-yet-extracted messages a lowered threshold may add for the run to lower the session's threshold and extract them by itself. `0` lowers it only when the audit already extracted every message it would add. |
-
-**`[export]`**
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `output_dir` | the config file's directory | Where the import file and manual-add list go. Overridden by `--output-dir`. |
-| `data_dir` | `"~/.cache/flighty_exporter/openflights"` | Cache for OpenFlights' `airports.dat` and `airlines.dat`. |
-| `data_url` | `"https://raw.githubusercontent.com/jpatokal/openflights/master/data/"` | Where those files are downloaded from on first use. |
-
-**`[run]`**
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `thoroughness` | `"quick"` | How hard `run` looks for flight emails the first filter missed: `"quick"` runs no audit; `"thorough"` audits after extract and, within `[audit] auto_include_budget`, lowers the session's threshold (see [All in one go: run](#all-in-one-go-run)). Overridden by `run --thoroughness`. |
-
-Every command also accepts `--config FILE` before the command name, e.g.
-`uv run flighty-exporter --config ~/flights/flighty_exporter.toml review`.
-
-## Known limits
-
-- **One Gmail mailbox at a time**, from a Google Takeout mbox. No IMAP, no
-  other providers, no merging of several mailboxes.
-- **Text-layer PDFs only.** There is no OCR: image-only PDFs, boarding-pass
-  images and screenshots are not read (unread PDFs are listed in the failures
-  file).
-- **No flights before 2006 in the import file.** Flighty has no records before
-  2006, so those flights go to the manual-add list. Flighty also says its
+- **One mailbox per session**, from a Google Takeout mbox. No IMAP, no other
+  providers, no merging of mailboxes.
+- **No settings screen** in the application: changing a setting means
+  starting fresh.
+- **Review only after a complete run.** A paused or stopped run cannot be
+  reviewed until it finishes.
+- **The screens are verified by hand** (see
+  [`docs/manual-checks.md`](docs/manual-checks.md)), not by the test suite.
+- **Text-layer PDFs only.** No OCR: image-only PDFs, boarding-pass images
+  and screenshots are not read (they are listed in the failures file).
+- **PDF-only e-tickets** with generic wording ("Your e-ticket is attached")
+  score low at classification, because the decision model never sees PDF
+  text. Use Thorough (or `audit`) and look at its PDF section.
+- **No flights before 2006 in the import file.** Flighty has no records
+  before 2006, so they go to the manual-add list; Flighty also says its
   records for 2006 to 2011 are often incomplete.
 - **Flighty Pro** is needed to import flights older than a year.
-- **Confidence is a weak signal.** The extraction model reports confidence 1.0
-  almost always, so a row without attention reasons is not proof it is right.
-  The review step matters.
-- **PDF-only e-tickets** with generic email wording ("Your e-ticket is
-  attached") score low at classification, because the decision model never
-  sees PDF text. Run `audit` and look at its PDF section.
-- **Calendar events with only UTC times**, and incomplete schema.org markup,
-  are not read directly (the local date would be uncertain); those messages go
-  through the models instead.
-- **Hyphenated or run-together surnames** need an explicit name variant (see
-  [Setup](#setup)).
+- **Confidence is a weak signal.** The extraction model reports 1.0 almost
+  always; a flight without attention reasons is not proof it is right.
+- **Hyphenated surnames.** Names are split into words at anything that is
+  not a letter, so `Ana Garcia-Lopez` does not match a ticket written
+  `GARCIALOPEZ/ANA`; add the variant `Ana Garcialopez`.
 - **Schedule changes are handled per leg.** A change that reroutes you
   through a different airport replaces only legs with the same origin and
-  destination, so the old leg can remain; remove it in review.
-- **Testing has been English-centred.** The synthetic test mailbox has one
+  destination, so the old leg can remain; drop it in the review.
+- **Decisions follow the latest result**, so a flight you corrected can
+  disappear after a later run; the report counts such decisions.
+- **Testing has been English-centred.** The synthetic mailbox has one
   Spanish email; other languages should work but are less tested.
 
-## Troubleshooting
+### Troubleshooting
 
-Messages from the preflight check (classify, extract and audit):
+Messages from the model-server checks (the run, setup's server step,
+classify, extract, audit, `setup --check`, `pull-models`). `<command>` is
+what to rerun: the command's name, `flighty-exporter` on the application's
+progress screen (press `r` there), or `the check (press c)` in setup:
 
 - `refusing to use the Ollama server at ...: ... and email content would leave this machine.`
-  The `[ollama] address` is not on this machine. Point it at a local server
-  (`http://localhost:11434`), or see the override under [Privacy](#privacy).
+  The address is not on this machine: point `[ollama] address` at
+  `http://localhost:11434`, or see the override under [Privacy](#privacy).
 - ``the Ollama server at ... is not reachable (...). Start it with `ollama serve`, or open the Ollama app, then rerun <command>.``
   Start Ollama, or fix `[ollama] address`.
 - `the Ollama server at ... is version ..., but flighty-exporter needs Ollama 0.35.0 or later ...`
   Update Ollama from https://ollama.com/download.
 - ``the model ... ([models] decision) is not pulled on the Ollama server at .... Pull it with `ollama pull ...`, then rerun <command>.``
-  (or `[models] extraction`) Run the `ollama pull` command it names.
+  (or `[models] extraction`) Pull it, use `pull-models --yes`, or press `d`
+  in setup.
 - `warning: could not read the Ollama version from ...; continuing, ...`
-  The server did not report a version it could read. The run continues; make
-  sure your Ollama is 0.35.0 or later.
+  The run continues; make sure your Ollama is 0.35.0 or later.
 - `the server at ... answered /api/version with HTTP ...; is it an Ollama server?`,
   `... did not list its models at /api/tags ...` or
-  `... with something that is not JSON ...`
-  Something other than Ollama is answering at `[ollama] address`.
+  `... with something that is not JSON ...`: something other than Ollama
+  answers at that address.
+- ``cannot reach Ollama at ...: ... Is `ollama serve` running?`` mid-stage,
+  followed (commands) by `Progress so far is saved; rerun <command> to resume.`
+  Start Ollama and rerun, or press `r` in the application.
+- `In the application, --allow-remote does not apply: ...` under a refused
+  address on the progress or setup screen: change the config file and start
+  again.
 
-If Ollama stops answering in the middle of a pass, the pass stops with
-``cannot reach Ollama at ...: ... Is `ollama serve` running?`` and `Progress so far is saved; rerun <command> to resume.`
+Setup's mailbox messages (`There is no file at ...`, `... is a folder, not a
+file. ...`, `... is a zip archive, not a mailbox. ...` and so on) each say
+what to point at instead. `... cannot be read (...)` for a file in Downloads
+or Documents usually means your terminal needs access to that folder (System
+Settings > Privacy & Security).
 
 Other messages:
 
 - ``no mailbox given: pass --mailbox PATH or set `mailbox` in the config file``
-  or `mailbox file not found: ...`: set `mailbox` to the full path of the
-  `.mbox` file.
+  or `mailbox file not found: ...`: set `mailbox` to the `.mbox` file. In
+  the application, a session whose mailbox has moved says so on the startup
+  prompt: put the file back or start fresh.
 - `store not found: ... Run classify first.` (audit) or
-  `... Run classify and extract first.` (review): run the earlier passes, or
-  check `store` and that you are in the directory with your config file.
+  `... Run classify and extract first.` (review): run the earlier stages, or
+  check `store` and that you are in the folder with your config file.
 - `review table ... has been edited since review wrote it ...`: see
-  overwrite protection under [review](#4-review).
-- `review table ... has no ... column ...` (export): a required column header
-  was renamed or deleted. Restore it from a freshly written table (for
-  example `review --output fresh.csv`).
+  [review](#review).
+- `review table ... has no ... column ...` (export): a required header was
+  renamed or deleted; restore it from a fresh table (`review --output
+  fresh.csv`).
 - `review table ... is not UTF-8 text ...`: save it again as "CSV UTF-8".
 - `OpenFlights data file ... is not in ... and could not be downloaded ...`:
-  the reference data could not be fetched. Check your connection, or download
-  `airports.dat` and `airlines.dat` by hand from the `data_url` into
-  `data_dir`.
+  check your connection, or download `airports.dat` and `airlines.dat` from
+  `data_url` into `data_dir` by hand.
 - `unknown config setting: ...`: a typo in the config file.
 
-**A store from an older version** of the tool is upgraded automatically the
-first time a command opens it; nothing needs to be redone. (A store written by
-a version that did not record PDF attachments has them filled in by the next
-`audit`, with one extra scan of the mailbox. One written before message
-positions were recorded has them found by the next `extract` or `audit`, with
-one scan of the mailbox's headers.)
+**A store from an older version** is upgraded the first time a command opens
+it; nothing needs redoing. Missing message positions are found by the next
+extract or audit with one scan of the mailbox's headers; flights extracted
+before text was saved show `source text unavailable (extracted before text
+was saved)`.
 
-**Forcing reclassification.** Results are stored per model name, so changing
-`[models] decision` (or `extraction`) makes the next run classify (or extract)
-again with the new model. There is no option to reclassify with the same
-model: to start over, delete the store file (`flighty_exporter.db` and its
-`-wal`/`-shm` files) or point `store` (or `--store`) at a new file. This also
-discards the extractions, which then have to be redone. Changing
-`[classify] threshold` never needs reclassification.
+**Reclassifying.** Results are stored per model name, so changing
+`[models] decision` (or `extraction`) makes the next run classify (or
+extract) again. To start over with the same models, start fresh.
 
 ## Development
 
@@ -958,25 +930,34 @@ discards the extractions, which then have to be redone. Changing
 uv run pytest
 ```
 
-The tests drive the tool the way a user does: each one builds a small mbox of
-invented emails and a config file in a temporary directory, runs the command
-line, and checks only the files written, the exit status and the printed
-output. The one fake is the Ollama server, replaced at the HTTP boundary with
-scripted answers, so the suite needs no model and no network.
+**One seam.** The tests drive the tool as a user does: each builds a small
+mbox of invented emails and a config file in a temporary folder, runs the
+command line, and checks only the printed output, the exit status, the files
+written and what the model server received. The one fake is the Ollama
+server, replaced at the HTTP boundary with scripted answers
+(`tests/fake_ollama.py`, `tests/mailbox_fixtures.py`, `tests/conftest.py`),
+so the suite needs no model and no network. The application's screens have
+no automated tests: they are kept free of logic (everything they do is
+reachable through a command) and checked by hand with
+[`docs/manual-checks.md`](docs/manual-checks.md).
 
-`test.mbox` is a synthetic 200-message Gmail-style mailbox for trying the
-whole pipeline with the real models, and `test.mbox.truth.json` lists the
-flight emails in it and the flights they describe, for comparing with the
-review table. Both were generated by `scripts/generate_test_mbox.py`, which
-fixes the people, bookings and flights with a seed and has a local Ollama
-model write only the subject and body text. To try it, set
-`mailbox = "test.mbox"` at the top of your config and
-`names = ["Jordan Ellis"]` under `[passenger]` (or let setup do it:
-`uv run flighty-exporter setup --mailbox test.mbox --name "Jordan Ellis"`).
+**The synthetic mailbox.** `test.mbox` is a 200-message Gmail-style mailbox
+for trying the whole pipeline with the real models, and
+`test.mbox.truth.json` lists its flight emails and the flights they
+describe. Both were generated by `scripts/generate_test_mbox.py`, which fixes
+the people, bookings and flights with a seed and has a local model write only
+the subject and body text. Its owner is `Jordan Ellis`:
 
-The rule for contributions: no real email, name, address, booking reference or
-flight ever goes into the repository, including test fixtures. Everything in
-the tests and the test mailbox is invented.
+```
+uv run flighty-exporter setup --mailbox test.mbox --name "Jordan Ellis"
+uv run flighty-exporter run
+```
+
+With the real models a Quick run finds seven flights for Jordan Ellis.
+
+**The rule for contributions:** no real email, name, address, booking
+reference or flight ever goes into the repository, including test fixtures.
+Everything in the tests and the test mailbox is invented.
 
 ### Layout
 
@@ -986,24 +967,23 @@ The package `src/flighty_exporter/` is grouped by responsibility:
 |---|---|
 | `mail/` | Turning an mbox into readable messages: `reader` (MIME), `html_text`, `pdf_text`, and `markup` (machine-readable flight data). The only place that knows about MIME, HTML, PDFs or calendar files. |
 | `ollama/` | Everything that talks to the model server: the `decision` and `extraction` clients, `preflight`, `pull` (downloading a model through the server), and `connection` (the shared HTTP opener and the errors that stop a pass). |
-| `flights/` | The pure domain, with no I/O: `records` (the record types and their validation), `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
-| `stages/` | The pipeline passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
-| `output/` | What the user gets at the end: `review`, `sources` (a flight's source emails from the store), `flight_view` (the flight list as the review screen and `flights` show it), `decide` (one review decision at a time), `export`, and `openflights` (the import file format and reference data). |
-| `app/` | The full-screen application the bare command opens (Textual): `shell` (the application and moving between screens), `runner` (runs the engine on a thread and turns its events into messages), `background` (setup's server check and model downloads on threads) and `screens/` (one module per screen). Draws what the engine reports; no pipeline logic. |
-| `engine/` | The run engine behind `run`: `pipeline` (the stages in order, reported as events), `events`, `report` (the end-of-run report), `session` (describing and starting fresh a session), `thorough` (what a Thorough run does after its audit), `setup` (checking guided setup's answers and writing them to the config file), `readiness` (the model server's readiness as data), and `models` (the locality check, model clients and the store opened with the lazy preflight check, shared with the single commands). Prints nothing. |
-| top level | Cross-cutting pieces: `cli` (entry point), `config`, `store`, `progress`, `tables` (CSV writing and message dates shared by audit, review and export), and `threshold` (the session's effective threshold). |
+| `flights/` | The pure domain, with no I/O: `records`, `consolidate`, `validate`, `passengers`, `decisions` (review decisions and the flight identity they are keyed by). |
+| `stages/` | The passes that tie mail, model server and store together: `classify`, `extract`, `audit`. |
+| `output/` | What the user gets at the end: `review`, `sources`, `flight_view` (the flight list as the review screen and `flights` show it), `decide`, `export`, and `openflights` (the import file format and reference data). |
+| `engine/` | The run engine behind `run` and the application: `pipeline`, `events`, `report`, `session`, `thorough`, `setup`, `readiness`, and `models` (the locality check, model clients and the store opened with the lazy preflight check). Prints nothing. |
+| `app/` | The full-screen application (Textual): `shell` (moving between screens), `runner` (the engine on a thread), `background` (setup's server check and model downloads), `paths` (showing a path on screen) and `screens/` (one module per screen). Draws what the engine reports; no pipeline logic. |
+| top level | `cli` (entry point), `config`, `store`, `progress`, `tables` (CSV writing and message dates), and `threshold` (the effective threshold). |
 
 The dependency rule, enforced by `tests/test_layout.py`:
 
 - `flights` imports nothing else from the package.
-- `mail` imports nothing from `ollama`, `stages`, `output` or the top level,
-  except the record types from `flights.records` (the markup parser produces
-  a record).
+- `mail` imports only the record types from `flights.records`.
 - `ollama` may import the message type (`mail.reader.Message`) and the record
-  types; nothing from `stages`, `output` or the top level.
-- `config`, `store`, `progress`, `tables` and `threshold` may import `flights` only.
-- `stages` and `output` may import from everything below them, but not from
-  each other; neither imports `cli`.
+  types.
+- `config`, `store`, `progress`, `tables` and `threshold` may import
+  `flights` only.
+- `stages` and `output` may import everything below them, but not each
+  other; neither imports `cli`.
 - `engine` may import `stages`, `output` and everything below them; only
   `cli` and `app` import it.
 - `app` may import `engine` and everything below it; only `cli` imports it,
@@ -1021,7 +1001,9 @@ Airport and airline reference data comes from
 `airlines.dat`), made available under the
 [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/). It is
 not redistributed with this tool: it is downloaded on first use and cached on
-your machine. The import file follows OpenFlights' backup CSV format.
+your machine. The import file follows OpenFlights' backup CSV format. The
+application is built with [Textual](https://textual.textualize.io/); PDF text
+is read with [pypdf](https://pypdf.readthedocs.io/).
 
 Flighty is a trademark of its owner. This project is not affiliated with or
 endorsed by Flighty, OpenFlights, Google or Ollama.

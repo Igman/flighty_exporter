@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" role="img" aria-labelledby="title desc">
   <title id="title">Data flow between the five commands</title>
-  <desc id="desc">The mbox file feeds classify, extract and audit. Those three read and write the store, a single SQLite file. Review reads the store and writes review.csv, which you edit. Export reads review.csv and writes the import file for Flighty.</desc>
+  <desc id="desc">The mbox file feeds classify, extract and audit. Those three read and write the store, a single SQLite file. Review reads the store and writes review.csv, which you edit. Export reads review.csv (recording your edits in the store as decisions), or the store directly, and writes the import file for Flighty.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path class="head" d="M0 0L10 5L0 10z"/>
@@ -48,7 +48,7 @@
 
   <rect class="store" x="160" y="130" width="440" height="56" rx="4"/>
   <text class="slbl" x="380" y="153">the store (one SQLite file)</text>
-  <text class="sub" x="380" y="172">messages · classifications · extractions · failures</text>
+  <text class="sub" x="380" y="172">messages · classifications · extractions · failures · decisions</text>
 
   <rect class="cmd" x="160" y="250" width="110" height="46" rx="4"/>
   <text class="lbl" x="215" y="270">review</text>
@@ -80,4 +80,5 @@
   <path class="ln" d="M270 273H323"/>
   <path class="ln" d="M435 273H488"/>
   <path class="ln" d="M600 273H638"/>
+  <path class="ln" style="marker-start: url(#arrow)" d="M545 188V248"/>
 </svg>
