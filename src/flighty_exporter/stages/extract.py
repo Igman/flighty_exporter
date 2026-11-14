@@ -25,6 +25,7 @@ from ..mail.reader import Mailbox, Message
 from ..ollama.extraction import ExtractionClient, ExtractionFailed
 from ..progress import Progress
 from ..store import EXTRACT_PASS, Store
+from .summary import failure_lines
 
 PASS_NAME = EXTRACT_PASS
 NOT_IN_MAILBOX = "message is no longer in the mailbox (classified from a different mbox?)"
@@ -137,10 +138,7 @@ def format_summary(summary: ExtractSummary, config: Config, store: Store) -> str
         f"  inputs truncated:     {summary.inputs_truncated}",
         f"  PDFs not read:        {summary.pdfs_not_read}",
     ]
-    for identifier, reason in summary.failures[:20]:
-        lines.append(f"    failed {identifier}: {reason}")
-    if len(summary.failures) > 20:
-        lines.append(f"    ... and {len(summary.failures) - 20} more")
+    lines += failure_lines(summary.failures)
     if summary.selected == 0:
         lines.append(
             f"  No message has a gate probability at or above {config.threshold:g} for "

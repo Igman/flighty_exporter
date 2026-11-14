@@ -139,19 +139,14 @@ def write_review(config: Config, store: Store, review_path: Path, failures_path:
     for message_id in selected:
         sender, subject, raw_date = store.message_info(message_id)
         message_date, sent_at = format_message_date(raw_date)
+        listed = {"message_id": message_id, "message_date": message_date, "sender": sender, "subject": subject}
         for reason in store.attachment_notes(message_id):
             unread_attachments += 1
-            failures.append(
-                {"message_id": message_id, "message_date": message_date, "sender": sender,
-                 "subject": subject, "reason": reason}
-            )
+            failures.append({**listed, "reason": reason})
         record = records.get(message_id)
         if record is None:
             reason = store.failure_reason(message_id, EXTRACT_PASS) or NOT_EXTRACTED
-            failures.append(
-                {"message_id": message_id, "message_date": message_date, "sender": sender,
-                 "subject": subject, "reason": reason}
-            )
+            failures.append({**listed, "reason": reason})
             continue
         sources.append(
             SourceRecord(

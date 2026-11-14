@@ -55,6 +55,7 @@ from ..progress import Progress
 from ..store import Store
 from ..tables import format_message_date, write_csv
 from .extract import ExtractSummary, extract_messages
+from .summary import failure_lines
 
 BAND_EDGES = (0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0)
 
@@ -306,10 +307,7 @@ def format_report(result: AuditResult, config: Config, store: Store, output: Pat
         lines.append(f"  not in mailbox:       {ex.not_in_mailbox}")
     if ex.pdfs_not_read:
         lines.append(f"  PDFs not read:        {ex.pdfs_not_read}")
-    for identifier, reason in ex.failures[:20]:
-        lines.append(f"    failed {identifier}: {reason}")
-    if len(ex.failures) > 20:
-        lines.append(f"    ... and {len(ex.failures) - 20} more")
+    lines += failure_lines(ex.failures)
     if result.pdf_backfilled:
         lines.append(f"  PDF attachments noted from the mailbox for {result.pdf_backfilled} earlier-classified messages")
 
@@ -429,7 +427,8 @@ def format_interrupted(result: AuditResult) -> str:
     ex = result.extraction
     return "\n".join(
         [
-            "Audit interrupted. Rerun with the same seed to resume.",
+            # Interrupted by the user, or stopped by an unreachable server.
+            f"Audit {'interrupted' if result.interrupted else 'stopped'}. Rerun with the same seed to resume.",
             f"  sampled messages:     {result.sampled}",
             f"  already extracted (reused): {result.reused}",
             f"  to send to the extraction model: {result.to_extract}",

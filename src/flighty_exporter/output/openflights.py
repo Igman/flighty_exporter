@@ -46,7 +46,6 @@ HEADER = (
     "Plane,Registration,Trip,Note,From_OID,To_OID,Airline_OID,Plane_OID"
 )
 FILE_NAME_FORMAT = "openflights-backup-%Y-%m-%d-%H%M.csv"
-FILE_GLOB = "openflights-backup-*.csv"
 
 _NULLS = ("", "\\N")
 
