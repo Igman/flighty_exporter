@@ -22,6 +22,14 @@ loaded, the table is still written without the code checks and the summary
 says why. The printed summary also lists the bookings dropped as being for
 other passengers, so the user can check them without the table.
 
+The saved review decisions (see ``flights.decisions``) are applied on top:
+corrections before the checks, so reasons and pre-set keep are recomputed
+from the corrected values, and a keep override after them. ``build_flight_list``
+builds this flight list for review, export and the terminal application. The
+last column, flight_id, names the flight as consolidation produced it, so an
+edited row can be matched to its flight. Writing the table discards the
+decisions whose flight is no longer produced and counts them in the summary.
+
 The failures file lists selected messages with no valid extraction, and PDF
 attachments of selected messages that the extract pass could not read
 (image-only, too large or unreadable) with the message they came from.

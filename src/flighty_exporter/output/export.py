@@ -21,6 +21,19 @@ Each data row is one of:
 - exported: written to the import file.
 
 Row numbers are spreadsheet row numbers: the header is row 1.
+
+Two sources (the command line picks one, see ``cli.cmd_export``):
+
+- ``run_export``: the review CSV, as above. Given the store, the CSV's keep
+  values and corrections are first recorded there as decisions, matched by
+  the flight_id column (``record_decisions``); rows without one record
+  nothing. With no store the CSV is exported exactly as before.
+- ``run_store_export``: the store's flight list with the saved decisions
+  applied (``review.build_flight_list``), turned into the rows the review
+  table would hold and read the same way, so both give the same files.
+
+The manual-add list's last column, done, shows the store's manual-add tick
+for the flight (set by ``mark-added``).
 """
 
 from __future__ import annotations

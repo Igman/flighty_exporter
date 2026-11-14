@@ -1,7 +1,8 @@
 """Command-line entry point: ``flighty-exporter [--config FILE] <command>``.
 
 Each pass is a subcommand registered in ``COMMANDS``: ``classify``,
-``extract``, ``review``, ``audit`` and ``export``.
+``extract``, ``review``, ``audit`` and ``export``. ``mark-added`` ticks a
+flight on the manual-add list in the store.
 
 The model commands (classify, extract, audit) first refuse an Ollama address
 that is not on this machine, and check the server just before their first
