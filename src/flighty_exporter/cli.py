@@ -42,7 +42,7 @@ from .mail.reader import MailboxError
 from .ollama.connection import OllamaUnreachable, PreflightError
 from .ollama.decision import DecisionClient
 from .ollama.extraction import ExtractionClient
-from .output import export, review, sources
+from .output import export, flight_view, review, sources
 from .output.openflights import ReferenceDataError
 from .stages import audit, extract
 from .stages.classify import format_summary, run_classify
@@ -406,6 +406,35 @@ COMMANDS["sources"] = (
     "list each flight review would list with its source emails and their saved text (needs only the store)",
     _sources_arguments,
     cmd_sources,
+)
+
+
+def cmd_flights(args: argparse.Namespace, config: Config) -> int:
+    if args.year is not None and not (len(args.year) == 4 and args.year.isdigit()):
+        raise UsageError(f"--year {args.year!r} is not a year (YYYY)")
+    store_path = _store_path(args, config)
+    if not store_path.is_file():
+        print(f"error: store not found: {store_path}. Run classify and extract first.", file=sys.stderr)
+        return EXIT_ERROR
+    filters = flight_view.Filters(flagged=args.flagged, not_kept=args.not_kept, year=args.year)
+    with Store(store_path) as store:
+        flight_list = review.build_flight_list(config, store)
+    print(flight_view.format_flights(flight_list, filters, config.thoroughness))
+    return EXIT_OK
+
+
+def _flights_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--store", help="SQLite store file (overrides `store` in config)")
+    parser.add_argument("--flagged", action="store_true", help="only flights needing attention")
+    parser.add_argument("--not-kept", action="store_true", help="only flights not kept")
+    parser.add_argument("--year", metavar="YYYY", help="only flights in this year")
+
+
+COMMANDS["flights"] = (
+    "list the flights as the review screen shows them (flights needing attention first), with the totals, "
+    "the bookings dropped as other passengers' and the emails that could not be read (reads only)",
+    _flights_arguments,
+    cmd_flights,
 )
 
 

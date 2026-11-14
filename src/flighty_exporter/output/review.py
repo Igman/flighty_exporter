@@ -56,7 +56,9 @@ from ..flights.consolidate import (
 )
 from ..flights.decisions import ReviewedFlight, apply_decisions
 from ..flights.records import MARKUP_SOURCE
-from ..flights.validate import REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, normalise_record, reason_kind
+from ..flights.validate import (
+    REASON_KINDS, UNKNOWN_AIRLINE, UNKNOWN_AIRPORT, CodeLookup, normalise_record, reason_kind,
+)
 from ..store import EXTRACT_PASS, Store
 from ..tables import format_message_date, write_csv
 from ..threshold import effective_threshold
@@ -144,6 +146,9 @@ class FlightList:
     unread_attachments: int
     codes_not_checked: str | None  # why the codes were not checked, None if they were
     stale_decisions: set[str]  # keys of saved decisions that name no flight
+    # The reference data the codes were checked against, None if not loaded;
+    # kept so one flight can be checked again after a decision (see ``decide``).
+    reference: CodeLookup | None = None
 
 
 def write_review(config: Config, store: Store, review_path: Path, failures_path: Path, force: bool) -> ReviewSummary:
@@ -261,7 +266,7 @@ def build_flight_list(config: Config, store: Store) -> FlightList:
     flights, stale = apply_decisions(
         result.flights, store.review_decisions(), reference, config.review_min_confidence
     )
-    return FlightList(flights, result, sources, failures, unread_attachments, codes_not_checked, stale)
+    return FlightList(flights, result, sources, failures, unread_attachments, codes_not_checked, stale, reference)
 
 
 def discard_stale_decisions(store: Store, flight_list: FlightList) -> int:
@@ -325,7 +330,7 @@ def format_summary(summary: ReviewSummary) -> str:
         f"  bookings for other passengers (dropped): {len(dropped)}",
     ]
     for booking in dropped[:DROPPED_LISTED]:
-        lines.append(f"    {_dropped_line(booking)}")
+        lines.append(f"    {dropped_line(booking)}")
     if len(dropped) > DROPPED_LISTED:
         lines.append(f"    and {len(dropped) - DROPPED_LISTED} more")
     lines += [
@@ -352,7 +357,7 @@ def format_warnings(summary: ReviewSummary) -> list[str]:
     return [f"warning: {CODES_NOT_CHECKED} {summary.codes_not_checked}"]
 
 
-def _dropped_line(booking: DroppedBooking) -> str:
+def dropped_line(booking: DroppedBooking) -> str:
     flights = f"{booking.flights} flight{'' if booking.flights == 1 else 's'}"
     return (
         f"{booking.booking_reference or '(no booking reference)'}: {'; '.join(booking.passengers)} "
