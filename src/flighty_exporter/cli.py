@@ -31,6 +31,8 @@ from typing import Any
 
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
 from .engine import session
+from .engine import setup
+from .engine.readiness import check_readiness, format_readiness
 from .engine.events import CLASSIFY, EXTRACT, UNREACHABLE, Event, Notice, Problem, RunFinished, StageFinished, StageStarted
 from .engine.models import address_warning, decision_client, extraction_client, pass_store
 from .engine.pipeline import STOPPED_BY_PROBLEM, STOPPED_ON_REQUEST, RunError, run_pipeline
@@ -574,6 +576,65 @@ COMMANDS["session"] = (
 )
 
 
+def cmd_setup(args: argparse.Namespace, config: Config | None) -> int:
+    """Write guided setup's three answers to the config file. Runs before the
+    config is loaded, since the file may not exist yet (see ``main``)."""
+    config_path = args.config or Path(DEFAULT_CONFIG_NAME)
+    try:
+        result = setup.write_answers(
+            config_path, setup.mailbox_path(args.mailbox, Path.cwd()), args.name or [], args.thoroughness
+        )
+    except setup.SetupError as exc:
+        print(f"error: {exc} Nothing was written.", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"{'Created' if result.created else 'Updated'} {result.config_path}:")
+    for line in setup.format_written(result):
+        print(f"  {line}")
+    if not result.created:
+        print("Every other setting, comment and section in the file was left as it was.")
+    if not args.check:
+        return EXIT_OK
+    print()
+    readiness = check_readiness(load_config(result.config_path), allow_remote=args.allow_remote, command="setup --check")
+    for line in format_readiness(readiness):
+        print(line)
+    return EXIT_OK if readiness.ready else EXIT_ERROR
+
+
+def _setup_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--mailbox", required=True, help="the mbox file (from Gmail Takeout) to use")
+    parser.add_argument(
+        "--name",
+        action="append",
+        metavar="NAME",
+        help="one of your name variants as it appears on bookings; repeat for each variant (none: passenger "
+        "filtering is off and every booking is kept)",
+    )
+    parser.add_argument(
+        "--thoroughness",
+        choices=("quick", "thorough"),
+        default="quick",
+        help="quick (the default) runs no audit; thorough also checks for missed flight emails after extract",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="then check that the model server is reachable, new enough and has both configured models",
+    )
+    _allow_remote_argument(parser)
+
+
+COMMANDS["setup"] = (
+    "write the mailbox, name variants and thoroughness to the config file (creating it if needed and keeping "
+    "every other setting), as the application's setup screen does",
+    _setup_arguments,
+    cmd_setup,
+)
+
+# Commands that load the config file themselves (``setup`` may create it).
+LOADS_OWN_CONFIG = {"setup"}
+
+
 def _open_app(args: argparse.Namespace, config: Config) -> int:
     """The bare command in a terminal: the full-screen application. Loaded
     only here, so the single commands never import it."""
@@ -608,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
         # Outside a terminal the bare command fails as when a command was required.
         parser.error("the following arguments are required: command")
     try:
+        if args.command in LOADS_OWN_CONFIG:
+            return args.handler(args, None)
         config = load_config(args.config)
         if args.command is None:
             return _open_app(args, config)

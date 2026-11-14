@@ -236,18 +236,24 @@ def _resolve(data: dict[str, Any], base: Path) -> Config:
         if field in values and values[field] < minimum:
             raise ConfigError(f"{name} must be at least {minimum}")
     if "passenger_names" in values:
-        names = values["passenger_names"]
-        for name in names:
-            if not isinstance(name, str) or not names_someone(name):
-                raise ConfigError(
-                    f"[passenger] names must be a list of names, e.g. [\"Jordan Ellis\"]; {name!r} is not a name"
-                )
-        values["passenger_names"] = tuple(" ".join(name.split()) for name in names)
+        values["passenger_names"] = check_passenger_names(values["passenger_names"])
     if "thoroughness" in values and values["thoroughness"] not in THOROUGHNESS:
         raise ConfigError(f'[run] thoroughness must be "quick" or "thorough", got {values["thoroughness"]!r}')
     if "ollama_address" in values:
         values["ollama_address"] = _ollama_address(values["ollama_address"])
     return Config(**values)
+
+
+def check_passenger_names(names: list[Any] | tuple[Any, ...]) -> tuple[str, ...]:
+    """``[passenger] names`` checked and tidied (inner spaces collapsed);
+    ``ConfigError`` for an entry that names no one, such as a title on its
+    own. Shared by the loader and guided setup."""
+    for name in names:
+        if not isinstance(name, str) or not names_someone(name):
+            raise ConfigError(
+                f"[passenger] names must be a list of names, e.g. [\"Jordan Ellis\"]; {name!r} is not a name"
+            )
+    return tuple(" ".join(name.split()) for name in names)
 
 
 def _ollama_address(value: str) -> str:

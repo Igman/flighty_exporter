@@ -105,23 +105,55 @@ def check_server(
 ) -> None:
     """Check that Ollama at ``address`` is reachable, new enough and has
     ``model`` (configured as ``setting``, e.g. "[models] decision")."""
-    version_answer = _get(address, "/api/version", command, timeout)
-    found = version_answer.get("version") if isinstance(version_answer, dict) else None
-    parsed = parse_version(found) if isinstance(found, str) else None
-    required = ".".join(map(str, MIN_VERSION))
-    if parsed is None:
-        if warn is not None:
-            warn(
-                f"warning: could not read the Ollama version from {address} (got {found!r}); continuing, but "
-                f"flighty-exporter needs Ollama {required} or later."
-            )
-    elif parsed < MIN_VERSION:
-        raise PreflightError(
-            f"the Ollama server at {address} is version {found}, but flighty-exporter needs Ollama {required} "
-            f"or later (the release that added the decision endpoint). Update Ollama "
-            f"(https://ollama.com/download), then rerun {command}."
-        )
+    found = server_version(address, command, timeout)
+    problem = version_problem(address, found, command)
+    if problem is not None:
+        raise PreflightError(problem)
+    if not version_readable(found) and warn is not None:
+        warn(unreadable_version_warning(address, found))
+    if not is_pulled(model, pulled_models(address, command, timeout)):
+        raise PreflightError(model_missing_message(address, model, setting, command))
 
+
+# The pieces ``check_server`` is made of, also used to report the server's
+# readiness as a whole (guided setup).
+
+
+def server_version(address: str, command: str, timeout: float = PREFLIGHT_TIMEOUT) -> Any:
+    """The ``version`` the server reports at ``GET /api/version`` (None if it
+    reports none); ``PreflightError`` when the server cannot be reached or
+    does not answer like Ollama."""
+    version_answer = _get(address, "/api/version", command, timeout)
+    return version_answer.get("version") if isinstance(version_answer, dict) else None
+
+
+def version_problem(address: str, found: Any, command: str) -> str | None:
+    """The message for a server older than ``MIN_VERSION``; None when it is
+    new enough or its version cannot be read (which only warns)."""
+    parsed = parse_version(found) if isinstance(found, str) else None
+    if parsed is None or parsed >= MIN_VERSION:
+        return None
+    return (
+        f"the Ollama server at {address} is version {found}, but flighty-exporter needs Ollama {_required()} "
+        f"or later (the release that added the decision endpoint). Update Ollama "
+        f"(https://ollama.com/download), then rerun {command}."
+    )
+
+
+def version_readable(found: Any) -> bool:
+    return isinstance(found, str) and parse_version(found) is not None
+
+
+def unreadable_version_warning(address: str, found: Any) -> str:
+    return (
+        f"warning: could not read the Ollama version from {address} (got {found!r}); continuing, but "
+        f"flighty-exporter needs Ollama {_required()} or later."
+    )
+
+
+def pulled_models(address: str, command: str, timeout: float = PREFLIGHT_TIMEOUT) -> set[str]:
+    """The models the server lists at ``GET /api/tags``, as comparable keys
+    (see ``is_pulled``)."""
     tags = _get(address, "/api/tags", command, timeout)
     listed = tags.get("models") if isinstance(tags, dict) else None
     if not isinstance(listed, list):
@@ -129,18 +161,40 @@ def check_server(
             f"the server at {address} did not list its models at /api/tags (got {str(tags)[:200]}); is it an "
             f"Ollama server?"
         )
-    names = {
+    return {
         _model_key(entry.get(key))
         for entry in listed
         if isinstance(entry, dict)
         for key in ("name", "model")
         if isinstance(entry.get(key), str)
     }
-    if _model_key(model) not in names:
-        raise PreflightError(
-            f"the model {model} ({setting}) is not pulled on the Ollama server at {address}. "
-            f"Pull it with `ollama pull {model}`, then rerun {command}."
-        )
+
+
+def is_pulled(model: str, pulled: set[str]) -> bool:
+    return _model_key(model) in pulled
+
+
+def model_missing_message(address: str, model: str, setting: str, command: str) -> str:
+    return (
+        f"the model {model} ({setting}) is not pulled on the Ollama server at {address}. "
+        f"Pull it with `ollama pull {model}`, then rerun {command}."
+    )
+
+
+def unreachable_message(address: str, reason: object, command: str) -> str:
+    return (
+        f"the Ollama server at {address} is not reachable ({reason}). Start it with `ollama serve`, or open "
+        f"the Ollama app, then rerun {command}."
+    )
+
+
+def model_key(name: str) -> str:
+    """How model names compare (see ``_model_key``), for keying a table by model."""
+    return _model_key(name)
+
+
+def _required() -> str:
+    return ".".join(map(str, MIN_VERSION))
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -176,10 +230,7 @@ def _get(address: str, path: str, command: str, timeout: float) -> Any:
         reason = getattr(exc, "reason", exc)
         if isinstance(reason, (TimeoutError, socket.timeout)):
             reason = f"no answer within {timeout:g}s"
-        raise PreflightError(
-            f"the Ollama server at {address} is not reachable ({reason}). Start it with `ollama serve`, or open "
-            f"the Ollama app, then rerun {command}."
-        ) from exc
+        raise PreflightError(unreachable_message(address, reason, command)) from exc
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
