@@ -234,7 +234,8 @@ changing a setting means starting fresh.
 application describes it (the mailbox and whether it is still there, how far
 each stage got, the threshold in use, when it last ran, whether it is
 complete) and asks: `r` resumes (an unfinished run carries on; a finished one
-goes on to its results), `f` starts fresh. Starting fresh asks once, listing
+opens its review directly, which needs only the store, not the mailbox), `f`
+starts fresh. Starting fresh asks once, listing
 what would be lost and what is kept, deletes what `run --fresh` deletes, and
 shows setup with your previous answers filled in.
 

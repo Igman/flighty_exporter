@@ -361,3 +361,40 @@ def test_a_store_from_before_sessions_is_described_and_cleared(workspace):
     assert head[0].startswith(f"Deleted the store: {workspace.root.resolve() / STORE}")
     assert "files it generated earlier are not known and were not deleted" in head[1]
     assert len(workspace.ollama.decision_requests()) == 5
+
+
+# -- has the run reached its end? (what Resume opens) -------------------------------------------
+
+
+def complete_without_failures(workspace):
+    mbox = mailbox(workspace)
+    del workspace.ollama.chats[BROKEN_SUBJECT]
+    workspace.ollama.decisions[BROKEN_SUBJECT].gate = 0.001
+    return mbox
+
+
+def test_a_run_that_reached_review_is_finished(workspace):
+    run(workspace, "--mailbox", str(complete_without_failures(workspace)))
+
+    assert value(session(workspace), "run finished") == "yes (resuming opens the review)"
+
+
+def test_every_candidate_extracted_without_a_review_is_not_finished(workspace):
+    """Classify and extract with nothing left to extract look complete, but
+    the run never reached review (a Thorough run's audit, or the rest of the
+    mailbox, may still be to do): resuming runs the engine."""
+    mbox = complete_without_failures(workspace)
+    for command in ("classify", "extract"):
+        assert workspace.run(command, "--mailbox", str(mbox)).returncode == 0
+
+    text = session(workspace)
+
+    assert value(text, "state") == "complete"
+    assert value(text, "run finished") == "no (resuming runs the remaining stages)"
+
+
+def test_a_finished_run_whose_review_table_was_deleted_is_not_finished(workspace):
+    run(workspace, "--mailbox", str(complete_without_failures(workspace)))
+    (workspace.root / "review.csv").unlink()
+
+    assert value(session(workspace), "run finished") == "no (resuming runs the remaining stages)"

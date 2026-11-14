@@ -1,9 +1,9 @@
 """The startup prompt, shown when a session exists: resume it or start fresh.
 
 It draws the session as ``engine.session.describe`` reports it and offers
-two choices. Resume shows the progress screen, which runs the engine: an
-unfinished run carries on, a finished one completes at once and the app
-moves on to its results. Start fresh asks once, listing what would be lost
+two choices. Resume on a finished session (``SessionDescription.finished``)
+opens its review directly, which reads only the store; otherwise it shows
+the progress screen, which runs the engine from where it stopped. Start fresh asks once, listing what would be lost
 and what is kept, then calls ``engine.session.start_fresh`` and shows setup
 with the previous answers prefilled.
 
@@ -67,9 +67,18 @@ def describe_lines(d: SessionDescription) -> list[str]:
     if d.threshold_used < d.threshold_configured:
         threshold += f" (lowered for this session from the configured {d.threshold_configured:g})"
     lines.append(f"  threshold  {threshold}")
+    files = f"{len(d.files):,} written for this session and still there"
+    if not d.files_known:
+        files += " (files written before this store recorded them are not known)"
+    lines.append(f"  files      {files}")
     lines.append("")
-    if d.complete:
-        lines.append("[green]The run is complete.[/green] Resuming opens its results.")
+    if d.finished:
+        lines.append("[green]The run is complete.[/green] Resuming opens its review.")
+    elif d.complete:
+        lines.append(
+            "[yellow]The run did not reach its end[/yellow] (it stopped before review). Resuming runs the "
+            "remaining stages; nothing finished is sent to a model again."
+        )
     elif read == 0:
         lines.append("[yellow]The run is unfinished:[/yellow] nothing has been classified yet.")
     else:
@@ -77,7 +86,13 @@ def describe_lines(d: SessionDescription) -> list[str]:
             f"[yellow]The run is unfinished:[/yellow] {d.still_to_extract:,} likely flight "
             f"email{'' if d.still_to_extract == 1 else 's'} still to extract. Resuming carries on where it stopped; nothing finished is sent to a model again."
         )
-    if d.mailbox is not None and not d.mailbox_exists:
+    if d.mailbox is not None and not d.mailbox_exists and d.finished:
+        lines.append("")
+        lines.append(
+            "[yellow]The mailbox file is no longer at that path.[/yellow] That does not matter for the review: "
+            "it reads only what is stored, including the text of each flight's source emails."
+        )
+    elif d.mailbox is not None and not d.mailbox_exists:
         lines.append("")
         lines.append(
             "[red]The mailbox file is no longer at that path.[/red] The store keeps only what the run has "
@@ -156,7 +171,7 @@ class StartupScreen(Screen):
         with VerticalScroll():
             yield Static("[b]A previous session was found.[/b]\n")
             yield Static("\n".join(describe_lines(self.description)), id="session")
-            resume = "open the finished run's results" if self.description.complete else "carry on where it stopped"
+            resume = "open the finished run's review" if self.description.finished else "carry on where it stopped"
             yield Static(
                 f"[b]r[/b]  Resume: {resume}\n"
                 "[b]f[/b]  Start fresh: delete this session (after one confirmation) and answer setup again, "
@@ -170,6 +185,10 @@ class StartupScreen(Screen):
         self.query_one("#session").border_title = f"Session in {self.description.store_path}"
 
     def action_resume(self) -> None:
+        if self.description.finished:
+            # The review reads everything from the store: no run, and no mailbox, needed.
+            self.app.open_review(None)  # type: ignore[attr-defined]
+            return
         config = self.app.config  # type: ignore[attr-defined]
         mailbox = self.description.mailbox or config.mailbox
         if mailbox is None:

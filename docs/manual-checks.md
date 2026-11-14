@@ -28,39 +28,48 @@ messages and press `q`.
    session started and was last active (local time), the names and
    thoroughness it was started with, how far it got (classify: N of M
    recorded emails read; extract: N of M likely flight emails extracted;
-   review: flights and saved decisions; the threshold in use), and "The run
-   is unfinished" with how many are still to extract. The footer offers
-   `r Resume`, `f Start fresh`, `q Quit`.
+   review: flights and saved decisions; the threshold in use; files: how many
+   the session wrote that are still there), and "The run is unfinished" with
+   how many are still to extract. The footer offers `r Resume`, `f Start
+   fresh`, `q Quit`. The figures match `uv run flighty-exporter session`.
 2. **Resume an unfinished run.** Press `r`. The progress screen opens and
    carries on: classify's counts start from where the last launch stopped,
    and no finished message is sent to a model again.
 3. **Finished session.** Let a run finish, quit, launch again. The prompt
-   says "The run is complete. Resuming opens its results." and the `r` line
-   reads "open the finished run's results". Press `r`: the run completes at
-   once without model requests, and the app moves on to the results (the
-   review screen once it exists; until then the progress screen's report).
-4. **Threshold lowered.** After a Thorough run that lowered the threshold,
+   says "The run is complete. Resuming opens its review." and the `r` line
+   reads "open the finished run's review" (`session` prints "run finished:
+   yes"). Press `r`: the review screen opens at once, with no progress
+   screen and no model request, showing your saved decisions.
+4. **Complete but not finished.** Start a Thorough session and quit during
+   the audit stage. Launch: the prompt says "The run did not reach its end"
+   (`session` prints "state: complete" but "run finished: no"); `r` opens
+   the progress screen, which runs the audit and the remaining stages.
+5. **Threshold lowered.** After a Thorough run that lowered the threshold,
    the prompt's threshold line reads like "0.02 (lowered for this session
    from the configured 0.05)".
-5. **Mailbox moved.** Rename the mailbox file and launch. The Mailbox line
-   ends with "(no longer there)" in red, and a paragraph explains that
-   resuming reads the mailbox again and would stop with "mailbox file not
-   found": put the file back, or start fresh. Pressing `r` anyway shows the
-   progress screen with that error and `r Retry`; rename the file back and
-   press `r` there to carry on.
-6. **Start fresh, cancelled.** Press `f`. A dialog asks "Start fresh?",
+6. **Mailbox moved, unfinished.** With an unfinished session, rename the
+   mailbox file and launch. The Mailbox line ends with "(no longer there)"
+   in red, and a paragraph explains that resuming reads the mailbox again
+   and would stop with "mailbox file not found": put the file back, or start
+   fresh. Pressing `r` anyway shows the progress screen with that error and
+   `r Retry`; rename the file back and press `r` there to carry on.
+7. **Mailbox moved, finished.** With a finished session, rename the
+   mailbox file and launch. The Mailbox line ends with "(no longer there)",
+   and a note says that does not matter for the review. `r` opens the
+   review; the source emails' text (`enter`) still shows.
+8. **Start fresh, cancelled.** Press `f`. A dialog asks "Start fresh?",
    lists what would be lost (for example "classification of 200 emails",
    "extraction of 31 emails", "2 generated files") and says that the
    mailbox, the config file, downloaded models and the cached reference data
    are never deleted. Press `n` (or Escape): the dialog closes and nothing is
    deleted (`check.db` is still there).
-7. **Start fresh, confirmed.** Press `f`, then `y`. Setup opens with a
+9. **Start fresh, confirmed.** Press `f`, then `y`. Setup opens with a
    green-bordered notice at the top: "Started fresh." and one line per file
    deleted (review table, failures file, the store). `check.db`,
    `review.csv` and `failures.csv` are gone; the mailbox and config file are
    not. The three answers are filled in with the ones the session was
    started with.
-8. **Quit.** On the prompt, `q` quits with status `0`.
+10. **Quit.** On the prompt, `q` quits with status `0`.
 
 ## Guided setup
 

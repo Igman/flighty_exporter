@@ -105,6 +105,16 @@ class SessionDescription:
     def still_to_extract(self) -> int:
         return self.candidates - self.extracted
 
+    @property
+    def finished(self) -> bool:
+        """The run reached its end: complete, and the review table it writes
+        last is recorded and still there. ``complete`` alone cannot tell a
+        run stopped early in classify (no candidates yet) or during a
+        Thorough audit from a finished one, since the store does not know the
+        mailbox's size; resuming a finished session opens its review without
+        running the engine, so it must be sure."""
+        return self.complete and any(f.kind == REVIEW_TABLE for f in self.files)
+
 
 @dataclass
 class FreshResult:
@@ -335,6 +345,8 @@ def format_description(description: SessionDescription) -> str:
         f"  flights:                    {d.flights}",
         f"  flights with a saved decision: {d.flights_with_decision}",
         f"  state:                      {state}",
+        f"  run finished:               "
+        f"{'yes (resuming opens the review)' if d.finished else 'no (resuming runs the remaining stages)'}",
     ]
     in_use = f"{d.threshold_used:g}"
     if d.threshold_used < d.threshold_configured:

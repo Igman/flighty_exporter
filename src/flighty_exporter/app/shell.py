@@ -49,7 +49,8 @@ class FlightyApp(App[int]):
         otherwise setup, prefilled from the config file, so that a first run
         confirms its three answers (one key accepts them as they are).
         Setup moves on to the model-server check and from there to the
-        progress screen; resume goes to the progress screen directly."""
+        progress screen; resume goes to the review for a finished session,
+        to the progress screen otherwise."""
         description = session.describe(self.config, self.config.store)
         if description is not None:
             return StartupScreen(description)
