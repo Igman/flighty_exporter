@@ -7,14 +7,15 @@ you started using it. The emails are read by two language models running on
 your own machine through Ollama.
 
 **Status.** This is a personal project, shared as is, with no support
-promised. Its author has run it on macOS with Apple silicon; the test suite
-also passes on Windows. The screens have been exercised by scripted
+promised. Its author has run it on macOS with Apple silicon and on Windows
+with an NVIDIA graphics card; the test suite passes on both. The screens have been exercised by scripted
 walkthroughs, but some paths have not been checked by hand against a real
 model server: downloading a model from inside the application, the key that
 shows the import file in the file manager, and the screens shown when the
 server is down. Two limits to know before you start: classification takes
 roughly 0.6 to 1.3 seconds per message on an Apple M5 Pro, so a large mailbox
-takes many hours (see [Performance](#performance)); and the extraction model
+takes many hours there (about 0.1 seconds per message was measured on an RTX
+4090; see [Performance](#performance)); and the extraction model
 reports a confidence of 1.0 for everything, so do not rely on that figure.
 
 What it is not:
