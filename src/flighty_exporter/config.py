@@ -75,6 +75,9 @@ class ConfigError(Exception):
 @dataclass(frozen=True)
 class Config:
     mailbox: Path | None = None
+    # The `mailbox` setting as written in the file (a relative path not
+    # resolved), so setup can show it as the user typed it; None when not set.
+    mailbox_text: str | None = None
     store: Path = Path(DEFAULT_CONFIG_NAME).with_suffix(".db")
     ollama_address: str = "http://127.0.0.1:11434"
     ollama_timeout_seconds: float = 300.0
@@ -213,6 +216,8 @@ def _resolve(data: dict[str, Any], base: Path) -> Config:
         else:
             raise ConfigError(f"unknown config setting: {key}")
 
+    if "mailbox" in values:
+        values["mailbox_text"] = values["mailbox"]
     for field in _PATH_FIELDS:
         if field in values:
             values[field] = _path(values[field], base)

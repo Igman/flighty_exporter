@@ -158,7 +158,8 @@ the saved email text, your review decisions and manual-add ticks, and the
 session's lowered threshold. **It keeps** the mailbox, the config file,
 downloaded models, the cached OpenFlights data and any file the tool did not
 record writing (your own files in the same folder are safe). Setup then opens
-with the previous answers filled in.
+with the previous answers filled in (the mailbox as the config file has it,
+so a relative path stays relative).
 
 **Changing any setting means starting fresh.** There is no settings screen:
 a session's settings are fixed once it starts. To change your names, the
@@ -746,7 +747,8 @@ sentence the application's startup prompt shows), the threshold in use
 (for example `0.02 (lowered for this session from the configured 0.05)`),
 the files written that still exist, and what starting fresh would lose.
 With no store it prints `No session yet.` `--fresh-preview` lists what
-starting fresh would delete, deleting nothing.
+starting fresh would delete, deleting nothing, and the answers setup would
+then be filled in with.
 
 ### setup and pull-models
 

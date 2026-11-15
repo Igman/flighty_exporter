@@ -345,7 +345,9 @@ From the review press `e`. Compare with `fe export --from-store --dry-run`.
    import files, manual-add list, the store). On disk those files and
    `flighty_exporter.db*` are gone; `test.mbox`, `flighty_exporter.toml` and
    any file of your own are still there, as are your models (`ollama list`)
-   and `~/.cache/flighty_exporter/openflights`. The answers are filled in.
+   and `~/.cache/flighty_exporter/openflights`. The answers are filled in,
+   the mailbox as typed in setup (`test.mbox`, not a full path), as
+   `fe session --fresh-preview` listed them.
 8. **Quit.** `q` exits with status `0`.
 
 ## Recorded walkthroughs

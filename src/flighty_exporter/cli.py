@@ -665,6 +665,12 @@ def cmd_session(args: argparse.Namespace, config: Config) -> int:
         for line in session.format_fresh(result):
             print(f"  {line}")
         print(session.KEPT_WHEN_FRESH)
+        description = session.describe(config, store_path)
+        if description is not None:
+            # What the application's setup screen is filled in with after starting fresh.
+            print("Setup would then be filled in with:")
+            for line in setup.format_answers(setup.answers_from_session(description, config)):
+                print(f"  {line}")
         return EXIT_OK
     description = session.describe(config, store_path)
     print("No session yet." if description is None else session.format_description(description))
