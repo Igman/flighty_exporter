@@ -14,7 +14,8 @@ destination; ``u`` clears its decision (asking first if it has a
 correction); ``f``, ``n`` and ``y`` set the flagged, not-kept and year
 filters; ``d`` and ``x`` show the dropped bookings and the unreadable
 emails; ``e`` moves on to export; ``q`` quits. The sub-views close with
-``escape``.
+``escape``. Below the table, the selected flight's reasons are shown in
+full, since the reasons column is often cut off at the table's edge.
 
 Only the changed row is redrawn after a decision, unless the flight moves
 (a correction changed its place in the order) or leaves the filtered view;
@@ -66,19 +67,22 @@ class ReviewView:
 
 
 class ReviewScreen(Screen):
+    # The footer shows the keys in this order and drops the last ones when
+    # the terminal is too narrow, so export and quit come straight after the
+    # keys for deciding, before the filters and lists.
     BINDINGS = [
         Binding("space", "toggle_keep", "Keep/drop"),
         Binding("k", "toggle_keep", "Keep/drop", show=False),
         Binding("enter", "open_emails", "Emails", show=False),
         Binding("c", "correct", "Correct"),
-        Binding("u", "reset", "Undo decision"),
+        Binding("u", "reset", "Undo"),
+        Binding("e", "export", "Export"),
+        Binding("q", "app.quit", "Quit"),
         Binding("f", "toggle_flagged", "Flagged"),
         Binding("n", "toggle_not_kept", "Not kept"),
         Binding("y", "next_year", "Year"),
         Binding("d", "show_dropped", "Dropped"),
         Binding("x", "show_failures", "Unreadable"),
-        Binding("e", "export", "Export"),
-        Binding("q", "app.quit", "Quit"),
     ]
 
     DEFAULT_CSS = """
@@ -87,6 +91,7 @@ class ReviewScreen(Screen):
     #filters { padding: 0 1; color: $text-muted; }
     #flights { height: 1fr; }
     #empty { height: 1fr; padding: 1 2; display: none; }
+    #reasons { height: auto; padding: 0 1; }
     #detail-box { height: 40%; min-height: 8; border: round $primary; padding: 0 1; }
     """
 
@@ -104,9 +109,10 @@ class ReviewScreen(Screen):
         yield Static("", id="filters")
         yield DataTable(id="flights", cursor_type="row", zebra_stripes=True)
         yield Static("", id="empty")
+        yield Static("", id="reasons")
         with VerticalScroll(id="detail-box"):
             yield Static("", id="detail")
-        yield Footer()
+        yield Footer(compact=True)
 
     def on_mount(self) -> None:
         self.query_one("#detail-box").border_title = "Selected flight (enter: its emails)"
@@ -136,6 +142,7 @@ class ReviewScreen(Screen):
 
     def _show_empty(self) -> None:
         self.query_one("#flights").display = False
+        self.query_one("#reasons").display = False
         self.query_one("#detail-box").display = False
         empty = self.query_one("#empty", Static)
         thoroughness = self.report.thoroughness if self.report is not None else self.config.thoroughness
@@ -185,6 +192,11 @@ class ReviewScreen(Screen):
         reference = self.reviewer.flight_list.reference if self.reviewer else None
         text = "\n".join(flight_view.detail_lines(reviewed, reference)) if reviewed else "No flight selected."
         self.query_one("#detail", Static).update(escape(text))
+        reasons = Text("reasons: ", style="bold")
+        if reviewed is not None:
+            shown = str(flight_view.flight_row(reviewed)[REASONS_COLUMN]) or "none"
+            reasons.append(shown, style=GROUP_STYLES[flight_view.attention_group(reviewed)])
+        self.query_one("#reasons", Static).update(reasons)
 
     def on_data_table_row_highlighted(self, message: DataTable.RowHighlighted) -> None:
         self._draw_detail()
