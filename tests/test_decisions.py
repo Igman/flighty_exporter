@@ -330,6 +330,8 @@ def test_mark_added_ticks_a_flight_on_the_manual_add_list(workspace):
     assert by_route.returncode == 0, by_route.stderr
     assert by_number.returncode == 0, by_number.stderr
     assert "2025-08-01 OSL-LIS" in by_route.stdout
+    # The list the table's export wrote follows each tick at once, before any new export.
+    assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "yes", ("2025-08-01", "", "OSL", "LIS"): "yes"}
     export(workspace)
     assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "yes", ("2025-08-01", "", "OSL", "LIS"): "yes"}
     # The same ticks show when exporting from the store.
@@ -339,6 +341,7 @@ def test_mark_added_ticks_a_flight_on_the_manual_add_list(workspace):
     undone = workspace.run("mark-added", "2004-08-01", "ZZ9", "--undo")
 
     assert undone.returncode == 0, undone.stderr
+    assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "", ("2025-08-01", "", "OSL", "LIS"): "yes"}
     export(workspace)
     assert done(manual) == {("2004-08-01", "ZZ9", "OSL", "LIS"): "", ("2025-08-01", "", "OSL", "LIS"): "yes"}
 
@@ -350,6 +353,7 @@ def test_mark_added_finds_a_corrected_flight_by_the_values_it_now_shows(workspac
     export(workspace)
 
     assert workspace.run("mark-added", "2004-08-01", "ZZ8").returncode == 0
+    assert done(workspace.root / "manual-add.csv") == {("2004-08-01", "ZZ8", "OSL", "LIS"): "yes"}
 
     (workspace.root / REVIEW).unlink()
     export(workspace)
