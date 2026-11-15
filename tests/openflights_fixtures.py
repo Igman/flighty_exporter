@@ -1,10 +1,15 @@
 """Tiny OpenFlights reference data files for export and review tests, in the format of
 OpenFlights' airports.dat and airlines.dat.
 
-The real airport and airline rows (public reference data, copied from
-OpenFlights) are the ones the regression anchor needs plus the airports the
-other tests use, so that review's code checks pass for them. Everything named Fictair, Imaginair, Quillfield and so on is
-invented. Tests never download the real files.
+The real airport and airline rows are the ones the regression anchor needs plus
+the airports the other tests use, so that review's code checks pass for them.
+Everything named Fictair, Imaginair, Quillfield and so on is invented. Tests
+never download the real files.
+
+Attribution: the real rows (14 airports, 6 airlines) are copied from
+OpenFlights' airports.dat and airlines.dat (https://openflights.org/data),
+made available under the Open Database License (ODbL) 1.0,
+https://opendatacommons.org/licenses/odbl/1-0/.
 """
 
 from __future__ import annotations

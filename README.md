@@ -6,6 +6,17 @@ file you can import into Flighty, so the app knows about flights from before
 you started using it. The emails are read by two language models running on
 your own machine through Ollama.
 
+**Status.** This is a personal project, shared as is, with no support
+promised. Its author has run it on macOS with Apple silicon; the test suite
+also passes on Windows. The screens have been exercised by scripted
+walkthroughs, but some paths have not been checked by hand against a real
+model server: downloading a model from inside the application, the key that
+shows the import file in the file manager, and the screens shown when the
+server is down. Two limits to know before you start: classification takes
+roughly 0.6 to 1.3 seconds per message on an Apple M5 Pro, so a large mailbox
+takes many hours (see [Performance](#performance)); and the extraction model
+reports a confidence of 1.0 for everything, so do not rely on that figure.
+
 What it is not:
 
 - It is not affiliated with or endorsed by Flighty.
@@ -520,8 +531,8 @@ file): keeping those out of version control is up to you.
 
 Measured on an Apple M5 Pro with 24 GB of RAM:
 
-- **Classification:** about 0.6 to 0.7 seconds per message. This is the long
-  part: about 10 hours per 50,000 messages.
+- **Classification:** about 0.6 to 1.3 seconds per message. This is the long
+  part: roughly 8 to 18 hours per 50,000 messages.
 - **Extraction:** about 3 seconds per selected message, for the small
   fraction of the mailbox that passes the gate.
 - **The check for missed flight emails** (Thorough): about 2 seconds per
@@ -872,8 +883,9 @@ fresh instead.
   before 2006, so they go to the manual-add list; Flighty also says its
   records for 2006 to 2011 are often incomplete.
 - **Flighty Pro** is needed to import flights older than a year.
-- **Confidence is a weak signal.** The extraction model reports 1.0 almost
-  always; a flight without attention reasons is not proof it is right.
+- **Confidence is not a signal.** The extraction model reports 1.0 for
+  everything, so do not rely on it; a flight without attention reasons is
+  not proof it is right.
 - **Hyphenated surnames.** Names are split into words at anything that is
   not a letter, so `Ana Garcia-Lopez` does not match a ticket written
   `GARCIALOPEZ/ANA`; add the variant `Ana Garcialopez`.
@@ -1030,9 +1042,12 @@ MIT, see [LICENSE](LICENSE).
 Airport and airline reference data comes from
 [OpenFlights](https://openflights.org/data) (`airports.dat` and
 `airlines.dat`), made available under the
-[Open Database License](https://opendatacommons.org/licenses/odbl/1-0/). It is
-not redistributed with this tool: it is downloaded on first use and cached on
-your machine. The import file follows OpenFlights' backup CSV format. The
+[Open Database License](https://opendatacommons.org/licenses/odbl/1-0/). The
+tool does not ship it: it is downloaded on first use and cached on your
+machine. The one exception is the test fixtures:
+`tests/openflights_fixtures.py` contains a few real rows copied from
+OpenFlights' `airports.dat` and `airlines.dat` (14 airports and 6 airlines),
+under the same licence. The import file follows OpenFlights' backup CSV format. The
 application is built with [Textual](https://textual.textualize.io/); PDF text
 is read with [pypdf](https://pypdf.readthedocs.io/).
 
