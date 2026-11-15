@@ -82,9 +82,10 @@ def describe_lines(d: SessionDescription) -> list[str]:
     colour = "green" if state.value == session.FINISHED else "yellow"
     lines.append(f"[{colour}]{escape(state.headline)}[/{colour}] {escape(state.detail)}")
     if state.value == session.FINISHED and d.extraction_failed:
+        them = "it" if d.extraction_failed == 1 else "them"
         lines.append(
             f"{d.extraction_failed:,} likely flight email{'' if d.extraction_failed == 1 else 's'} could not "
-            "be read; the review lists them (x), and the next run of the pipeline tries them again."
+            f"be read; the review lists {them} (x), and the next run of the pipeline tries {them} again."
         )
     if d.mailbox is not None and not d.mailbox_exists and d.finished:
         lines.append("")

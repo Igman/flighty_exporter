@@ -85,8 +85,8 @@ class WrittenFile:
 @dataclass(frozen=True)
 class SessionState:
     """Where the session stands, in one value, with what each view says about
-    it: ``progress`` is the `session` command's state line (how far classify
-    and extract got), ``headline`` and ``detail`` the startup prompt's
+    it: ``progress`` is the `session` command's state line (finished, or
+    unfinished and why), ``headline`` and ``detail`` the startup prompt's
     sentence (what the state is, and what resuming does)."""
 
     value: str  # FINISHED, STOPPED_BEFORE_REVIEW, NOTHING_CLASSIFIED or STILL_TO_EXTRACT
@@ -120,7 +120,6 @@ class SessionDescription:
     extracted: int  # candidates with a record from the configured extraction model
     flights: int  # in the current flight list
     flights_with_decision: int  # of those, with a saved review decision
-    complete: bool  # something classified or resolved, and no candidate left without an extraction
     files: tuple[WrittenFile, ...]  # recorded as written and still present
     files_known: bool  # False for an older store: files written before recording began are unknown
     would_lose: tuple[str, ...]  # plain-language lines: what starting fresh would lose
@@ -145,28 +144,32 @@ class SessionDescription:
 
     @property
     def state(self) -> SessionState:
-        """The session's state. Finished first (see ``finished``); then
-        nothing classified; then stopped before review, when every candidate
-        was extracted or failed to be (failures are retried by the next
-        run); otherwise candidates are still to extract."""
-        if self.complete:
-            progress = "complete"
-        elif self.read == 0:
-            progress = "unfinished: nothing classified yet"
-        else:
-            progress = f"unfinished: {_emails(self.still_to_extract)} still to extract"
+        """The session's state. Finished first (see ``finished``), even with
+        extractions that failed: the run reached its end, and the failures
+        are listed in the review and retried by the next run. Otherwise the
+        run is unfinished (it stopped before its end and can be resumed):
+        nothing classified; stopped before review, when every candidate was
+        extracted or failed to be; or candidates still to extract."""
         resume = "nothing finished is sent to a model again."
         if self.finished:
+            progress = "finished"
+            if self.extraction_failed:
+                them = "it" if self.extraction_failed == 1 else "them"
+                progress += (
+                    f"; {_plural(self.extraction_failed, 'likely flight email')} could not be read "
+                    f"(the review lists {them}, and the next run tries {them} again)"
+                )
             return SessionState(FINISHED, progress, "The run is complete.", "Resuming opens its review.")
         if self.read == 0:
-            return SessionState(NOTHING_CLASSIFIED, progress, "The run is unfinished:",
+            return SessionState(NOTHING_CLASSIFIED, "unfinished: nothing classified yet", "The run is unfinished:",
                                 "nothing has been classified yet.")
         if self.still_to_extract == self.extraction_failed:
             return SessionState(
-                STOPPED_BEFORE_REVIEW, progress, "The run did not reach its end",
+                STOPPED_BEFORE_REVIEW, "unfinished: stopped before review", "The run did not reach its end",
                 f"(it stopped before review). Resuming runs the remaining stages; {resume}",
             )
         left = self.still_to_extract
+        progress = f"unfinished: {_emails(left)} still to extract"
         return SessionState(
             STILL_TO_EXTRACT, progress, "The run is unfinished:",
             f"{left:,} likely flight email{'' if left == 1 else 's'} still to extract. Resuming carries on "
@@ -342,7 +345,6 @@ def describe(config: Config, store_path: Path) -> SessionDescription | None:
             extraction_failed=extraction_failed,
             flights=len(flight_list.flights),
             flights_with_decision=sum(1 for reviewed in flight_list.flights if reviewed.decision is not None),
-            complete=(classified + markup) > 0 and extracted == len(candidates),
             files=files,
             files_known=files_known,
             would_lose=_would_lose(counts, len(files), extracted, below),

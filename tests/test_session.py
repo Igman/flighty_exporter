@@ -85,7 +85,7 @@ def test_session_after_extract_review_and_export(workspace):
 
     text = session(workspace)
     assert value(text, "extracted") == "2 of 3"  # one extraction failed
-    assert value(text, "state") == "unfinished: 1 email still to extract"
+    assert value(text, "state") == "unfinished: stopped before review"
     assert "  extraction of 2 emails" in text
 
     assert workspace.run("review").returncode == 0
@@ -130,7 +130,7 @@ def test_after_a_thorough_run_starting_fresh_tells_extraction_from_the_check_apa
     assert not any(line.startswith("  extraction of 3") for line in lose)
 
 
-def test_a_session_whose_every_candidate_is_extracted_is_complete(workspace):
+def test_a_session_whose_run_extracted_every_candidate_is_finished(workspace):
     mbox = mailbox(workspace)
     del workspace.ollama.chats[BROKEN_SUBJECT]
     workspace.ollama.decisions[BROKEN_SUBJECT].gate = 0.001
@@ -138,7 +138,7 @@ def test_a_session_whose_every_candidate_is_extracted_is_complete(workspace):
 
     text = session(workspace)
 
-    assert value(text, "state") == "complete"
+    assert value(text, "state") == "finished"
     assert value(text, "extracted") == "2 of 2"
 
 
@@ -422,7 +422,7 @@ def test_every_candidate_extracted_without_a_review_is_not_finished(workspace):
 
     text = session(workspace)
 
-    assert value(text, "state") == "complete"
+    assert value(text, "state") == "unfinished: stopped before review"
     assert value(text, "run finished") == "no (resuming runs the remaining stages)"
 
 
@@ -435,14 +435,19 @@ def test_a_finished_run_whose_review_table_was_deleted_is_not_finished(workspace
 
 def test_a_run_that_reached_review_with_an_email_that_cannot_be_read_is_finished(workspace):
     """A message whose extraction keeps failing is retried on every run, but
-    the run did reach its end: resuming opens the review."""
+    the run did reach its end: it is finished, with a failure to look at,
+    not unfinished, and resuming opens the review."""
     run(workspace, "--mailbox", str(mailbox(workspace)))
 
     text = session(workspace)
 
     assert value(text, "extracted") == "2 of 3"
     assert value(text, "extraction failed") == "1"
+    assert value(text, "state") == (
+        "finished; 1 likely flight email could not be read (the review lists it, and the next run tries it again)"
+    )
     assert value(text, "run finished") == "yes (resuming opens the review)"
+    assert "unfinished" not in text
 
 
 def test_an_extraction_failure_alone_does_not_make_a_run_finished(workspace):
@@ -476,7 +481,7 @@ def test_every_candidate_extracted_or_failed_without_a_review_stopped_before_rev
     text = session(workspace)
 
     # The one candidate left failed: nothing is left to extract but its retry.
-    assert value(text, "state") == "unfinished: 1 email still to extract"
+    assert value(text, "state") == "unfinished: stopped before review"
     assert value(text, STANDS) == (
         "The run did not reach its end (it stopped before review). Resuming runs the remaining stages; "
         + RESUME_REST
@@ -490,7 +495,7 @@ def test_every_candidate_extracted_without_a_review_also_stopped_before_review(w
 
     text = session(workspace)
 
-    assert value(text, "state") == "complete"
+    assert value(text, "state") == "unfinished: stopped before review"
     assert value(text, STANDS).startswith("The run did not reach its end (it stopped before review).")
 
 

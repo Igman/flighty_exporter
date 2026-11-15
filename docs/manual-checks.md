@@ -327,7 +327,11 @@ From the review press `e`. Compare with `fe export --from-store --dry-run`.
 2. **Resume unfinished.** `r`: the progress screen carries on.
 3. **Finished session.** After a finished run, relaunch: "The run is
    complete. Resuming opens its review." `r` opens the review at once with
-   the saved decisions, no model request.
+   the saved decisions, no model request. If an email could not be read,
+   the run is still complete: a line under it says "1 likely flight email
+   could not be read; the review lists it (x) …", and `fe session` shows
+   "state: finished; 1 likely flight email could not be read …" with "run
+   finished: yes", never "unfinished".
 4. **Threshold lowered.** After a Thorough run that lowered it, the
    threshold line reads like "0.02 (lowered for this session from the
    configured 0.05)".
