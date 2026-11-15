@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from test_decisions import FLAGGED, GOOD, NO_NUMBER, OLD, OTHER, REVIEW, review, rows_by_id, run_passes, view
-from test_export import data_rows, the_import_file
+from test_export import data_rows, import_files, the_import_file
 from test_extract import read_csv
 
 
@@ -34,6 +34,10 @@ def decision_rows(workspace) -> dict[str, tuple[str, ...]]:
 
 
 def exported_numbers(workspace) -> list[str]:
+    # The import file is named to the minute, so an earlier export may have
+    # left one under another name: remove it, and read only this export's.
+    for path in import_files(workspace.root / "out"):
+        path.unlink()
     result = workspace.run("export", "--from-store", "--output-dir", "out")
     assert result.returncode == 0, result.stderr
     return sorted(line.split(",")[3] for line in data_rows(the_import_file(workspace.root / "out")))
