@@ -872,8 +872,9 @@ fresh instead.
   starting fresh.
 - **Review only after a complete run.** A paused or stopped run cannot be
   reviewed until it finishes.
-- **The screens are verified by hand** (see
-  [`docs/manual-checks.md`](docs/manual-checks.md)), not by the test suite.
+- **The screens have no automated tests.** They are meant to be checked by
+  hand with [`docs/manual-checks.md`](docs/manual-checks.md); so far that has
+  been done by scripted walkthroughs only (see Status at the top).
 - **Text-layer PDFs only.** No OCR: image-only PDFs, boarding-pass images
   and screenshots are not read (they are listed in the failures file).
 - **PDF-only e-tickets** with generic wording ("Your e-ticket is attached")
@@ -981,7 +982,7 @@ server, replaced at the HTTP boundary with scripted answers
 (`tests/fake_ollama.py`, `tests/mailbox_fixtures.py`, `tests/conftest.py`),
 so the suite needs no model and no network. The application's screens have
 no automated tests: they are kept free of logic (everything they do is
-reachable through a command) and checked by hand with
+reachable through a command) and are meant to be checked by hand with
 [`docs/manual-checks.md`](docs/manual-checks.md).
 
 **The synthetic mailbox.** `test.mbox` is a 200-message Gmail-style mailbox

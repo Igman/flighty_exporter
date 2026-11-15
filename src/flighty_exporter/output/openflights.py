@@ -49,6 +49,9 @@ FILE_NAME_FORMAT = "openflights-backup-%Y-%m-%d-%H%M.csv"
 
 _NULLS = ("", "\\N")
 
+EARTH_RADIUS_KM = 6371.2
+MILES_PER_KM = 0.621
+
 
 class ReferenceDataError(Exception):
     pass
@@ -145,20 +148,21 @@ class OpenFlights:
 
 
 def distance_miles(a: Airport, b: Airport) -> int:
-    """OpenFlights gcPointDistance(): floor(acos(...) * 6371.2 * 0.621)."""
-    if a.lon == b.lon and a.lat == b.lat:
-        return 0
-    rad = math.pi / 180.0
-    lon1, lat1, lon2, lat2 = a.lon * rad, a.lat * rad, b.lon * rad, b.lat * rad
-    cosine = math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
-    dist = math.acos(max(-1.0, min(1.0, cosine)))
-    if dist < 0:
-        dist += math.pi
-    return math.floor(dist * 6371.2 * 0.621)
+    """Great-circle distance in whole miles, by the spherical law of cosines.
+
+    The Earth radius and the miles-per-kilometre figure are the ones OpenFlights
+    uses, so the distances agree with its own.
+    """
+    lat_a, lat_b = math.radians(a.lat), math.radians(b.lat)
+    cos_angle = math.sin(lat_a) * math.sin(lat_b) + math.cos(lat_a) * math.cos(lat_b) * math.cos(
+        math.radians(b.lon - a.lon)
+    )
+    angle = math.acos(max(-1.0, min(1.0, cos_angle)))
+    return math.floor(angle * EARTH_RADIUS_KM * MILES_PER_KM)
 
 
 def duration(distance: int) -> str:
-    """OpenFlights gcDuration(): 30 minutes plus a 500 mph cruise, as HH:MM."""
+    """Flight time as HH:MM: 30 minutes plus the distance at 500 mph, as OpenFlights estimates it."""
     minutes = math.floor(30 + (distance / 500) * 60)
     return "%02d:%02d" % (minutes // 60, minutes % 60)
 
