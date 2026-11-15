@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from fake_ollama import Chat, Decision
+from fake_ollama import Chat, Decision, FakeOllama
 from mailbox_fixtures import FLIGHT_BODY, email, write_mbox
 from openflights_fixtures import unreachable_url
 from test_extract import FLIGHT_RECORD, FLIGHT_SUBJECT
@@ -338,6 +338,45 @@ def test_localhost_name_is_local(workspace):
     assert result.returncode == 0, result.stderr
     assert "warning" not in result.stderr
     assert workspace.ollama.pass_requests() == ["/v1/systemone"]
+
+
+def test_localhost_costs_no_more_than_the_loopback_address(workspace):
+    # On Windows "localhost" is ::1 before 127.0.0.1, and a refused connection
+    # there takes about two seconds: paid on every request (each opens a new
+    # connection), the 20 requests here would take over 40 seconds.
+    subjects = [f"Plain note {i}" for i in range(20)]
+    mbox = write_mbox(workspace.root / "mail.mbox", [email(s) for s in subjects])
+    address_config(workspace, f"http://localhost:{workspace.ollama.port}")
+
+    started = time.monotonic()
+    result = workspace.run("classify", "--mailbox", str(mbox))
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == 0, result.stderr
+    assert sorted(workspace.ollama.classified_subjects()) == sorted(subjects)
+    assert elapsed < 15, f"classify took {elapsed:.1f}s through localhost"
+
+
+def _ipv6_loopback() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind(("::1", 0))
+    except OSError:
+        return False
+    return "::1" in {info[4][0] for info in socket.getaddrinfo("localhost", None)}
+
+
+@pytest.mark.skipif(not _ipv6_loopback(), reason="localhost does not resolve to a usable ::1 here")
+def test_localhost_reaches_a_server_listening_on_ipv6_only(workspace):
+    mbox = write_mbox(workspace.root / "mail.mbox", [email("Plain note"), email("Another note")])
+    with FakeOllama(host="::1") as ipv6_only:
+        address_config(workspace, f"http://localhost:{ipv6_only.port}")
+
+        result = workspace.run("classify", "--mailbox", str(mbox))
+
+    assert result.returncode == 0, result.stderr
+    assert sorted(ipv6_only.classified_subjects()) == ["Another note", "Plain note"]
+    assert workspace.ollama.requests == []
 
 
 @pytest.mark.parametrize("host", ["127.1.2.3", "[::1]"])

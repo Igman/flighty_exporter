@@ -810,7 +810,7 @@ current folder when there is no file). An unknown setting is an error.
 | --- | --- | --- |
 | `mailbox` | none | The Takeout mbox. Needed by `run`, classify, extract and audit unless given with `--mailbox`; setup writes it. |
 | `store` | `"flighty_exporter.db"` | The store. Overridden by `--store`. |
-| `[ollama] address` | `"http://localhost:11434"` | The Ollama server; must be on this machine unless `allow_remote`. |
+| `[ollama] address` | `"http://127.0.0.1:11434"` | The Ollama server; must be on this machine unless `allow_remote`. |
 | `[ollama] timeout_seconds` | `300` | Per-request timeout for model requests (the server checks use at most 5 seconds). |
 | `[ollama] allow_remote` | `false` | Allow a non-local address (as `--allow-remote`); warns on every run. |
 | `[models] decision` | `"nimble"` | Decision model. Results are stored per model: changing it means classifying again. |
@@ -894,7 +894,7 @@ progress screen (press `r` there), or `the check (press c)` in setup:
 
 - `refusing to use the Ollama server at ...: ... and email content would leave this machine.`
   The address is not on this machine: point `[ollama] address` at
-  `http://localhost:11434`, or see the override under [Privacy](#privacy).
+  `http://127.0.0.1:11434`, or see the override under [Privacy](#privacy).
 - ``the Ollama server at ... is not reachable (...). Start it with `ollama serve`, or open the Ollama app, then rerun <command>.``
   Start Ollama, or fix `[ollama] address`.
 - `the Ollama server at ... is version ..., but flighty-exporter needs Ollama 0.35.0 or later ...`

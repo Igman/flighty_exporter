@@ -7,7 +7,7 @@ config next to the mailbox works wherever the tool is run from.
     store = "flighty_exporter.db"
 
     [ollama]
-    address = "http://localhost:11434"
+    address = "http://127.0.0.1:11434"
     timeout_seconds = 300
     allow_remote = false   # true lets email content go to a non-local address
 
@@ -76,7 +76,7 @@ class ConfigError(Exception):
 class Config:
     mailbox: Path | None = None
     store: Path = Path(DEFAULT_CONFIG_NAME).with_suffix(".db")
-    ollama_address: str = "http://localhost:11434"
+    ollama_address: str = "http://127.0.0.1:11434"
     ollama_timeout_seconds: float = 300.0
     # The model commands refuse an Ollama address that is not on this machine
     # (see ``preflight``) unless this is set (or --allow-remote is given).
@@ -266,10 +266,10 @@ def _ollama_address(value: str) -> str:
     if parsed.scheme.lower() not in ("http", "https"):
         raise ConfigError(
             f"[ollama] address must start with http:// or https://, got {value!r} "
-            "(e.g. \"http://localhost:11434\")"
+            "(e.g. \"http://127.0.0.1:11434\")"
         )
     if not parsed.hostname:
-        raise ConfigError(f"[ollama] address has no host name: {value!r} (e.g. \"http://localhost:11434\")")
+        raise ConfigError(f"[ollama] address has no host name: {value!r} (e.g. \"http://127.0.0.1:11434\")")
     return address
 
 

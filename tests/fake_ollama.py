@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -85,6 +86,10 @@ class RecordedRequest:
     body: Any
 
 
+class _IPv6Server(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
 @dataclass
 class FakeOllama:
     # Scripted decision answers keyed by the email subject sent in the state.
@@ -127,6 +132,9 @@ class FakeOllama:
     pull_total: int = 2000
     # False: a pull reports success without the model appearing in the list.
     pull_lists: bool = True
+    # The loopback address the server listens on: "127.0.0.1", or "::1" for
+    # a server reachable over IPv6 only.
+    host: str = "127.0.0.1"
 
     def __post_init__(self) -> None:
         self.routes: dict[tuple[str, str], Callable[[Any], tuple[int, str]]] = {
@@ -146,7 +154,12 @@ class FakeOllama:
     def url(self) -> str:
         assert self._server is not None
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}"
+        return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
+
+    @property
+    def port(self) -> int:
+        assert self._server is not None
+        return self._server.server_address[1]
 
     def __enter__(self) -> "FakeOllama":
         fake = self
@@ -209,7 +222,8 @@ class FakeOllama:
             def log_message(self, *args: Any) -> None:
                 pass
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_class = _IPv6Server if ":" in self.host else ThreadingHTTPServer
+        self._server = server_class((self.host, 0), Handler)
         self._server.daemon_threads = True
         threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         return self

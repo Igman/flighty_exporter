@@ -15,7 +15,7 @@ store = "flighty_exporter.db"
 # those. Before a pass's first model request the server must answer (start it
 # with `ollama serve` or the Ollama app), be version 0.35.0 or later, and have
 # the pass's model pulled (`ollama pull <model>`).
-address = "http://localhost:11434"
+address = "http://127.0.0.1:11434"
 # Per-request timeout for model requests. (The preflight check uses at most 5 seconds.)
 timeout_seconds = 300
 # Set to true only if you mean to send your email content to a model server
