@@ -219,7 +219,13 @@ same flights in the same order.
    evidence, keep, corrected, reasons. Blocking reasons (red) first, then
    advisory (yellow), then the rest, each by date. The first line reads
    "Flights: N · kept K · not kept M · needing attention A" (as `fe
-   flights`), the second "Showing: all flights (N of N flights)".
+   flights`), the second "Showing: all flights (N of N flights)". Below the
+   table, "reasons:" gives the selected flight's reasons in full (in the
+   group's colour, "none" for a flight without any), however narrow the
+   reasons column is. The footer reads `space Keep/drop`, `c Correct`, `u
+   Undo`, `e Export`, `q Quit`, then `f`, `n`, `y`, `d`, `x`: at 100
+   columns all of them show; at 80 the footer is cut after `y Year`, but
+   `e Export` and `q Quit` stay.
 3. **Detail panel.** Moving with the arrows, the panel follows: every field,
    "keep: … (pre-set)" or "(your choice; pre-set …)", each reason with
    "(blocking)" or "(advisory)", "source emails: N" with dates and
