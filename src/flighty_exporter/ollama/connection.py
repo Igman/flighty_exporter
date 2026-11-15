@@ -11,15 +11,68 @@ their clients: the run continues past them.
 
 from __future__ import annotations
 
+import http.client
 import socket
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 
+# The loopback address that answered for ``localhost``, per port.
+_LOCALHOST_ANSWERED: dict[int, str] = {}
+
+
+def _localhost_addresses(port: int) -> list[str]:
+    """What ``localhost`` resolves to, IPv4 first (where Ollama listens by default)."""
+    found = [info[4][0] for info in socket.getaddrinfo("localhost", port, type=socket.SOCK_STREAM)]
+    ordered = sorted(dict.fromkeys(found), key=lambda address: ":" in address)
+    return ordered or ["127.0.0.1"]
+
+
+def _create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):  # noqa: ANN001
+    """``socket.create_connection``, except that ``localhost`` goes straight
+    to the loopback address that answered last time. Each request opens a new
+    connection, and on Windows ``localhost`` is ::1 first: when Ollama listens
+    on 127.0.0.1 only (its default), every connection would first wait about
+    two seconds for ::1 to be refused."""
+    host, port = address
+    if host.lower() != "localhost":
+        return socket.create_connection(address, timeout, source_address)
+    known = _LOCALHOST_ANSWERED.get(port)
+    if known is not None:
+        try:
+            return socket.create_connection((known, port), timeout, source_address)
+        except OSError:
+            _LOCALHOST_ANSWERED.pop(port, None)  # the server has moved (restarted elsewhere): look again
+    error: OSError | None = None
+    for candidate in _localhost_addresses(port):
+        try:
+            connection = socket.create_connection((candidate, port), timeout, source_address)
+        except OSError as exc:
+            error = exc
+            continue
+        _LOCALHOST_ANSWERED[port] = candidate
+        return connection
+    assert error is not None
+    raise error
+
+
+class _OllamaConnection(http.client.HTTPConnection):
+    def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        super().__init__(*args, **kwargs)
+        self._create_connection = _create_connection
+
+
+class _OllamaHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(_OllamaConnection, req)
+
+
 # Every request to Ollama goes through this opener, which ignores proxy
 # settings (HTTP_PROXY and the like): a proxy would carry email content off
-# this machine even when the address itself is local.
-OLLAMA_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# this machine even when the address itself is local. Plain-HTTP connections
+# to ``localhost`` go to the loopback address that answers (see
+# ``_create_connection``).
+OLLAMA_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _OllamaHTTPHandler())
 
 
 class OllamaUnreachable(Exception):

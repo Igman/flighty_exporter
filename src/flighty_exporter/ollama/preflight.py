@@ -61,7 +61,7 @@ def check_address(address: str, allow_remote: bool) -> str | None:
         )
     raise PreflightError(
         f"refusing to use the Ollama server at {address}: {reason}, and email content would leave this machine. "
-        f"Point [ollama] address at a server on this machine (e.g. http://localhost:11434), or, to send email "
+        f"Point [ollama] address at a server on this machine (e.g. http://127.0.0.1:11434), or, to send email "
         f"content to {address} anyway, {ALLOW_REMOTE_HINT}."
     )
 

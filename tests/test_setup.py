@@ -167,7 +167,7 @@ def test_setup_fills_in_the_example_config(workspace):
     `thoroughness = "quick"`: the mailbox goes under its example, the other
     two are replaced, and nothing else changes."""
     example = (Path(__file__).resolve().parents[1] / "flighty_exporter.example.toml").read_text(encoding="utf-8")
-    example = example.replace('address = "http://localhost:11434"', f'address = "{workspace.ollama.url}"')
+    example = example.replace('address = "http://127.0.0.1:11434"', f'address = "{workspace.ollama.url}"')
     workspace.write_config(example)
     box = mbox(workspace)
 
