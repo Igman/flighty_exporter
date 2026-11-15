@@ -170,7 +170,8 @@ the saved email text, your review decisions and manual-add ticks, and the
 session's lowered threshold. **It keeps** the mailbox, the config file,
 downloaded models, the cached OpenFlights data and any file the tool did not
 record writing (your own files in the same folder are safe). Setup then opens
-with the previous answers filled in.
+with the previous answers filled in (the mailbox as the config file has it,
+so a relative path stays relative).
 
 **Changing any setting means starting fresh.** There is no settings screen:
 a session's settings are fixed once it starts. To change your names, the
@@ -753,12 +754,19 @@ still exists), what it was started with, when it started and was last
 active, the messages recorded (messages under Spam, Trash, Drafts and Chat
 are not counted), classified, resolved from machine-readable data, at or
 above the threshold in use, extracted, failed, flights and flights with a
-saved decision, whether it is complete and finished, where it stands (the
+saved decision, its state, whether the run finished, where it stands (the
 sentence the application's startup prompt shows), the threshold in use
 (for example `0.02 (lowered for this session from the configured 0.05)`),
 the files written that still exist, and what starting fresh would lose.
-With no store it prints `No session yet.` `--fresh-preview` lists what
-starting fresh would delete, deleting nothing.
+The state is `finished` once the run reached its end, even when a likely
+flight email could not be read: then it reads `finished; 1 likely flight
+email could not be read (the review lists it, and the next run tries it
+again)`, next to `run finished: yes (resuming opens the review)`. Otherwise
+it is `unfinished:` with why (`nothing classified yet`, `N emails still to
+extract`, or `stopped before review`): the run stopped before its end, and
+resuming carries on. With no store it prints `No session yet.` `--fresh-preview` lists what
+starting fresh would delete, deleting nothing, and the answers setup would
+then be filled in with.
 
 ### setup and pull-models
 

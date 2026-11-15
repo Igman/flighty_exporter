@@ -500,3 +500,50 @@ def test_check_refuses_a_non_local_address_before_any_request(workspace):
     assert f"error: refusing to use the Ollama server at {NON_LOCAL}" in result.stdout
     assert "email content would leave this machine" in result.stdout
     assert workspace.ollama.paths() == []
+
+
+# -- the answers filled in after starting fresh ------------------------------------------
+#
+# Starting fresh in the application returns to setup with the previous
+# answers filled in; ``session --fresh-preview`` prints the same answers.
+
+
+def refilled(workspace) -> dict[str, str]:
+    """The answers ``session --fresh-preview`` says setup would be filled in with."""
+    result = workspace.run("session", "--fresh-preview")
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    start = lines.index("Setup would then be filled in with:")
+    return dict(line.strip().split(": ", 1) for line in lines[start + 1 : start + 4])
+
+
+def test_after_starting_fresh_setup_is_filled_in_with_the_mailbox_as_typed(workspace):
+    mbox(workspace, "Mail/test.mbox")
+    assert workspace.run("setup", "--mailbox", "Mail/test.mbox", "--name", "Robin Quill").returncode == 0
+    assert workspace.run("classify").returncode == 0
+
+    answers = refilled(workspace)
+
+    assert answers["mailbox"].strip() == "Mail/test.mbox"
+    assert answers["passenger names"].strip() == "Robin Quill"
+    assert answers["thoroughness"].strip() == "quick"
+
+
+def test_after_starting_fresh_a_mailbox_outside_the_config_folder_is_filled_in_whole(workspace, tmp_path_factory):
+    box = write_mbox(tmp_path_factory.mktemp("elsewhere") / "test.mbox", [email("Hello there")])
+    assert workspace.run("setup", "--mailbox", str(box)).returncode == 0
+    assert workspace.run("classify").returncode == 0
+
+    assert refilled(workspace)["mailbox"].strip() == str(box)
+
+
+def test_after_starting_fresh_the_session_mailbox_wins_over_a_changed_config(workspace):
+    """The session was started with another mailbox than the config file now
+    names: setup is filled in with the session's, in full."""
+    first = mbox(workspace, "first.mbox")
+    mbox(workspace, "second.mbox")
+    assert workspace.run("setup", "--mailbox", "first.mbox").returncode == 0
+    assert workspace.run("classify").returncode == 0
+    assert workspace.run("setup", "--mailbox", "second.mbox").returncode == 0
+
+    assert refilled(workspace)["mailbox"].strip() == str(first.resolve())

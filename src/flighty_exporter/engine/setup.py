@@ -15,7 +15,8 @@ and shows what comes back):
   read back with the config loader before it replaces the file, so a file
   the loader would reject is never written.
 - ``answers_from_config`` and ``answers_from_session`` give the answers to
-  prefill.
+  prefill (the mailbox as the config file has it when that names the same
+  file), and ``format_answers`` prints them.
 """
 
 from __future__ import annotations
@@ -170,20 +171,50 @@ def check_thoroughness(value: str) -> str:
 
 
 def answers_from_config(config: Config) -> SetupAnswers:
-    return SetupAnswers(
-        str(config.mailbox) if config.mailbox is not None else "", config.passenger_names, config.thoroughness
-    )
+    """The config file's answers. The mailbox is the setting as written in
+    the file (a relative path as the user typed it) when, read from the
+    current directory as setup reads it, it names the same file; otherwise
+    its full path."""
+    return SetupAnswers(_mailbox_answer(config), config.passenger_names, config.thoroughness)
 
 
 def answers_from_session(description: SessionDescription, config: Config) -> SetupAnswers:
     """What the session was started with, where it recorded it; the config
-    file's values for the rest."""
+    file's values for the rest. The session records the mailbox's full path;
+    when the config file names the same file, it is shown as written there."""
     fallback = answers_from_config(config)
+    mailbox = fallback.mailbox
+    if description.mailbox is not None and not _same_file(description.mailbox, config.mailbox):
+        mailbox = str(description.mailbox)
     return SetupAnswers(
-        str(description.mailbox) if description.mailbox is not None else fallback.mailbox,
+        mailbox,
         description.passenger_names if description.passenger_names is not None else fallback.names,
         description.thoroughness if description.thoroughness in THOROUGHNESS else fallback.thoroughness,
     )
+
+
+def format_answers(answers: SetupAnswers) -> list[str]:
+    """The answers setup is filled in with, one line per setting."""
+    return [
+        f"mailbox:         {answers.mailbox or 'not known'}",
+        f"passenger names: {format_names(answers.names)}",
+        f"thoroughness:    {answers.thoroughness}",
+    ]
+
+
+def _mailbox_answer(config: Config) -> str:
+    if config.mailbox is None:
+        return ""
+    text = config.mailbox_text
+    if text is not None and _same_file(mailbox_path(text, Path.cwd()), config.mailbox):
+        return text
+    return str(config.mailbox)
+
+
+def _same_file(a: Path | None, b: Path | None) -> bool:
+    """Whether two paths name the same file, with symbolic links followed
+    (the file need not exist)."""
+    return a is not None and b is not None and os.path.realpath(a) == os.path.realpath(b)
 
 
 # -- writing the config file ---------------------------------------------------------------

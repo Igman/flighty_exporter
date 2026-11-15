@@ -453,7 +453,7 @@ def test_session_shows_the_lowered_threshold_with_both_numbers(workspace):
     assert session_value(text, "threshold") == "0.05"  # what the session was started with
     assert session_value(text, "threshold in use") == "0.02 (lowered for this session from the configured 0.05)"
     assert session_value(text, "at or above the threshold") == "4"
-    assert session_value(text, "state") == "complete"
+    assert session_value(text, "state") == "finished"
 
 
 def test_a_session_whose_include_was_stopped_is_unfinished_at_the_lowered_threshold(workspace):
